@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Command Center</title>
+    <link rel="stylesheet" href="/static/css/common.css">
+    <link rel="stylesheet" href="/static/css/command.css">
+</head>
+<body>
+
+    <!-- 1. Header Bar -->
+    <header class="cmd-header">
+        <h1 class="cmd-title">Command Center</h1>
+        <div class="connection-status" id="connection-status">
+            <span class="connection-dot" id="connection-dot"></span>
+            <span id="connection-label">Disconnected</span>
+        </div>
+    </header>
+
+    <!-- 2. Phase Tracker + Life Counters (compact bar) -->
+    <section class="phase-life-bar">
+        <div class="life-counters" id="life-counters">
+            <!-- Rendered by JS -->
+        </div>
+        <div class="phase-tracker" id="phase-tracker">
+            <!-- Rendered by JS -->
+        </div>
+        <div class="turn-info" id="turn-info">
+            <!-- Turn number + active player -->
+        </div>
+    </section>
+
+    <!-- 3. Chat / Conversation Area -->
+    <section class="chat-area">
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-empty" id="chat-empty">No messages yet. Start the conversation below.</div>
+        </div>
+    </section>
+
+    <!-- 4. Chat Input -->
+    <div class="chat-input-bar">
+        <textarea id="chat-input" class="chat-input-field" placeholder="Type a message to the AI..." rows="2"></textarea>
+        <button class="btn btn-primary chat-send-btn" id="chat-send" title="Send message">Send</button>
+    </div>
+
+    <!-- 5. Boardstate Snapshot (collapsible) -->
+    <section class="collapsible-section" id="snapshot-section">
+        <div class="section-header section-toggle">
+            <h3>Boardstate Snapshot</h3>
+            <span class="toggle-icon"></span>
+        </div>
+        <div class="section-body">
+            <div class="snapshot-controls">
+                <label class="snapshot-control-label">Recent Actions:
+                    <button class="btn btn-xs" id="recent-actions-minus">−</button>
+                    <span id="recent-actions-count">1</span>
+                    <button class="btn btn-xs" id="recent-actions-plus">+</button>
+                </label>
+            </div>
+            <textarea id="snapshot-text" class="snapshot-textarea monospace" readonly rows="10" placeholder="Waiting for state..."></textarea>
+        </div>
+    </section>
+
+    <!-- 6. Additional Notes -->
+    <section class="collapsible-section" id="notes-section">
+        <div class="section-header section-toggle">
+            <h3>Additional Notes</h3>
+            <span class="toggle-icon"></span>
+        </div>
+        <div class="section-body">
+            <textarea id="notes-text" class="notes-textarea" rows="4" placeholder="Add notes here. These will be included when copying the boardstate snapshot."></textarea>
+        </div>
+    </section>
+
+    <!-- 7. Action Log (collapsible) -->
+    <section class="collapsible-section" id="log-section">
+        <div class="section-header section-toggle">
+            <h3>Action Log</h3>
+            <span class="toggle-icon"></span>
+        </div>
+        <div class="section-body">
+            <div class="action-log" id="action-log">
+                <div class="log-empty">No actions recorded yet.</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 8. Button Bar -->
+    <footer class="cmd-button-bar">
+        <button class="btn" id="copy-snapshot" title="Copy boardstate snapshot to clipboard">Copy Boardstate</button>
+        <button class="btn" id="export-btn" title="Export game data">Export</button>
+        <button class="btn" id="undo-btn" title="Undo last action">Undo</button>
+        <button class="btn btn-danger" id="new-game-btn" title="Start a new game">New Game</button>
+    </footer>
+
+    <!-- Copy feedback toast -->
+    <div class="copy-toast" id="copy-toast">Copied!</div>
+
+    <script src="/static/js/ws.js"></script>
+    <script src="/static/js/utils.js"></script>
+    <script src="/static/js/command.js"></script>
+</body>
+</html>

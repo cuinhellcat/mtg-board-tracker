@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Board State Tracker — Game Board</title>
+    <link rel="stylesheet" href="/static/css/common.css">
+    <link rel="stylesheet" href="/static/css/board.css">
+</head>
+<body>
+    <div id="board-container">
+        <!-- No Game Message -->
+        <div id="no-game-message" class="no-game-overlay" style="display: none;">
+            <div class="no-game-content">
+                <h2>No Game in Progress</h2>
+                <p>Open <a href="/setup">/setup</a> to start a new game.</p>
+            </div>
+        </div>
+
+        <!-- ============ OPPONENT (Player 1 / LLM) - TOP HALF ============ -->
+        <div id="player-top" class="player-half player-top" data-player-index="1">
+            <div class="player-label">
+                <span class="player-name-display" id="player-top-name">Opponent</span>
+                <button class="untap-all-btn" data-player-index="1" title="Untap all permanents">↺ Untap All</button>
+            </div>
+            <div class="player-zones">
+                <!-- Left sidebar: Library (outer/next to hand) + Command Zone (inner/next to battlefield) -->
+                <div class="side-column side-left">
+                    <div class="zone zone-library" data-zone="library" data-player-index="1" id="zone-library-1">
+                        <div class="zone-label">Library</div>
+                        <div class="library-icon">
+                            <div class="library-card-back"></div>
+                            <span class="library-count" id="lib-count-1">0</span>
+                        </div>
+                    </div>
+                    <div class="zone zone-command" data-zone="command_zone" data-player-index="1" id="zone-command-1">
+                        <div class="zone-label">Command</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                </div>
+
+                <!-- Main area: Hand (outer/top) + Battlefield (inner) -->
+                <div class="main-column">
+                    <div class="zone zone-hand" data-zone="hand" data-player-index="1" id="zone-hand-1">
+                        <div class="zone-label">Hand (<span class="hand-count" id="hand-count-1">0</span>)</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                    <div class="zone zone-battlefield" data-zone="battlefield" data-player-index="1" id="zone-battlefield-1">
+                        <div class="zone-label">Battlefield</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                </div>
+
+                <!-- Right sidebar: Graveyard + Exile -->
+                <div class="side-column side-right">
+                    <div class="zone zone-graveyard zone-stack" data-zone="graveyard" data-player-index="1" id="zone-graveyard-1">
+                        <div class="zone-label">GY (<span class="gy-count" id="gy-count-1">0</span>)</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                    <div class="zone zone-exile zone-stack" data-zone="exile" data-player-index="1" id="zone-exile-1">
+                        <div class="zone-label">Exile (<span class="ex-count" id="ex-count-1">0</span>)</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ MIDDLE BAR: Life + Phase Tracker ============ -->
+        <div id="middle-bar">
+            <div class="middle-section life-section">
+                <div class="life-counter" id="life-counter-0" data-player-index="0">
+                    <span class="life-player-name" id="life-name-0">P1</span>
+                    <button class="life-btn life-minus" data-player-index="0" data-delta="-1">−</button>
+                    <span class="life-total" id="life-total-0">20</span>
+                    <button class="life-btn life-plus" data-player-index="0" data-delta="1">+</button>
+                    <div class="commander-damage-row" id="cmdr-dmg-0"></div>
+                    <div class="extra-counters-row" id="extra-counters-0" data-player-index="0"></div>
+                    <button class="add-counter-btn" data-player-index="0" title="Add counter">＋</button>
+                </div>
+            </div>
+
+            <div class="middle-section phase-section">
+                <div class="turn-info">
+                    <span id="turn-display">Turn 0</span>
+                    <span class="active-player-label">— <span id="active-player-name">...</span>'s Turn</span>
+                </div>
+                <div class="phase-tracker" id="phase-tracker">
+                    <span class="phase-step" data-phase="untap">Untap</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="upkeep">Upkeep</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="draw">Draw</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="main1">Main 1</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="combat_begin">Combat</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="combat_attackers">Atk</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="combat_blockers">Blk</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="combat_damage">Dmg</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="combat_end">CEnd</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="main2">Main 2</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="end_step">End</span>
+                    <span class="phase-arrow">▸</span>
+                    <span class="phase-step" data-phase="cleanup">Clean</span>
+                </div>
+                <div class="phase-controls">
+                    <button id="btn-next-phase" class="phase-nav-btn" title="Next Phase">→ Next</button>
+                    <button id="btn-pass-turn" class="phase-nav-btn btn-pass" title="Pass Turn">Pass Turn</button>
+                    <div class="card-size-control" title="Card Size">
+                        <label for="card-size-slider" class="card-size-label">&#x1F0CF;</label>
+                        <input type="range" id="card-size-slider" min="50" max="120" value="77" step="1">
+                        <button id="btn-card-size-reset" class="phase-nav-btn" title="Reset Card Size">↺</button>
+                    </div>
+                    <div class="card-size-control" title="Card Font Size">
+                        <label for="card-font-slider" class="card-size-label">A</label>
+                        <input type="range" id="card-font-slider" min="5" max="14" value="8" step="0.5">
+                        <button id="btn-card-font-reset" class="phase-nav-btn" title="Reset Font Size">↺</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="middle-section life-section">
+                <div class="life-counter" id="life-counter-1" data-player-index="1">
+                    <span class="life-player-name" id="life-name-1">P2</span>
+                    <button class="life-btn life-minus" data-player-index="1" data-delta="-1">−</button>
+                    <span class="life-total" id="life-total-1">20</span>
+                    <button class="life-btn life-plus" data-player-index="1" data-delta="1">+</button>
+                    <div class="commander-damage-row" id="cmdr-dmg-1"></div>
+                    <div class="extra-counters-row" id="extra-counters-1" data-player-index="1"></div>
+                    <button class="add-counter-btn" data-player-index="1" title="Add counter">＋</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ YOUR SIDE (Player 0 / Human) - BOTTOM HALF ============ -->
+        <div id="player-bottom" class="player-half player-bottom" data-player-index="0">
+            <div class="player-label">
+                <span class="player-name-display" id="player-bottom-name">You</span>
+                <button class="untap-all-btn" data-player-index="0" title="Untap all permanents">↺ Untap All</button>
+            </div>
+            <div class="player-zones">
+                <!-- Left sidebar: Command Zone (inner/next to battlefield) + Library (outer/next to hand) -->
+                <div class="side-column side-left">
+                    <div class="zone zone-command" data-zone="command_zone" data-player-index="0" id="zone-command-0">
+                        <div class="zone-label">Command</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                    <div class="zone zone-library" data-zone="library" data-player-index="0" id="zone-library-0">
+                        <div class="zone-label">Library</div>
+                        <div class="library-icon">
+                            <div class="library-card-back"></div>
+                            <span class="library-count" id="lib-count-0">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main area: Battlefield (inner/close to middle), Hand on bottom (outer) -->
+                <div class="main-column">
+                    <div class="zone zone-battlefield" data-zone="battlefield" data-player-index="0" id="zone-battlefield-0">
+                        <div class="zone-label">Battlefield</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                    <div class="zone zone-hand" data-zone="hand" data-player-index="0" id="zone-hand-0">
+                        <div class="zone-label">Hand (<span class="hand-count" id="hand-count-0">0</span>)</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                </div>
+
+                <!-- Right sidebar: Graveyard + Exile -->
+                <div class="side-column side-right">
+                    <div class="zone zone-graveyard zone-stack" data-zone="graveyard" data-player-index="0" id="zone-graveyard-0">
+                        <div class="zone-label">GY (<span class="gy-count" id="gy-count-0">0</span>)</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                    <div class="zone zone-exile zone-stack" data-zone="exile" data-player-index="0" id="zone-exile-0">
+                        <div class="zone-label">Exile (<span class="ex-count" id="ex-count-0">0</span>)</div>
+                        <div class="zone-cards"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ CONTEXT MENU ============ -->
+    <div id="context-menu" class="context-menu" style="display: none;">
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="counter_plus" data-counter="+1/+1">+1/+1 Counter</div>
+            <!-- Hidden: minus via clickable badge now -->
+            <div class="ctx-item" data-action="counter_minus" data-counter="+1/+1" style="display: none;">+1/+1 Counter −</div>
+            <div class="ctx-item" data-action="add_custom_counter">Counter hinzufügen...</div>
+            <div class="ctx-item" data-action="set_pt_badge">Set P/T Badge...</div>
+            <div class="ctx-item" data-action="remove_pt_badge">Remove P/T Badge</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="create_token">Create Token...</div>
+            <div id="related-tokens-container"></div>
+            <div class="ctx-item" data-action="clone_card">Clone Card</div>
+            <div class="ctx-item" data-action="toggle_face_down">Turn Face Down / Up</div>
+            <div class="ctx-item" data-action="transform_card">↻ Transform / Flip</div>
+            <div class="ctx-item" data-action="set_face_down_type" data-fd-type="morph">⬡ Morph (2/2)</div>
+            <div class="ctx-item" data-action="set_face_down_type" data-fd-type="manifest">⬡ Manifest (2/2)</div>
+            <div class="ctx-item" data-action="set_face_down_type" data-fd-type="cloaked">⬡ Cloaked — A Mysterious Creature (2/2)</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <!-- Move-to items hidden: user prefers drag & drop. Keep code for potential re-enable. -->
+        <div class="ctx-group" style="display: none;">
+            <div class="ctx-item" data-action="move_to" data-zone="hand">→ Hand</div>
+            <div class="ctx-item" data-action="move_to" data-zone="battlefield">→ Battlefield</div>
+            <div class="ctx-item" data-action="move_to" data-zone="graveyard">→ Graveyard</div>
+            <div class="ctx-item" data-action="move_to" data-zone="exile">→ Exile</div>
+            <div class="ctx-item" data-action="move_to" data-zone="library_top">→ Library (top)</div>
+            <div class="ctx-item" data-action="move_to" data-zone="library_bottom">→ Library (bottom)</div>
+            <div class="ctx-item" data-action="move_to" data-zone="command_zone">→ Command Zone</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="link_exile">Link to Exile...</div>
+            <div class="ctx-item" data-action="unlink_exile">Unlink from Exile</div>
+            <div class="ctx-item" data-action="attach_card">Attach to... (Aura/Equipment)</div>
+            <div class="ctx-item" data-action="detach_card">Detach</div>
+            <div class="ctx-item" data-action="toggle_oracle_text">☰ Oracle Text für LLM</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="change_printing">Change Art/Printing...</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-group">
+            <div class="ctx-item ctx-item-danger" data-action="delete_card">Delete (tokens only)</div>
+        </div>
+    </div>
+
+    <!-- Battlefield Context Menu (right-click on empty battlefield) -->
+    <div id="battlefield-context-menu" class="context-menu" style="display: none;">
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="bf_create_token">Token erstellen...</div>
+            <div class="ctx-item" data-action="bf_add_card_battlefield">Karte → Battlefield...</div>
+            <!-- Hidden: user prefers drag & drop -->
+            <div class="ctx-item" data-action="bf_add_card_hand" style="display: none;">Karte → Hand...</div>
+        </div>
+    </div>
+
+    <!-- Library Context Menu -->
+    <div id="library-context-menu" class="context-menu" style="display: none;">
+        <div class="ctx-group">
+            <!-- Hidden: user prefers drag & drop -->
+            <div class="ctx-item" data-action="draw_card" style="display: none;">Draw Card</div>
+            <div class="ctx-item" data-action="shuffle_library">Shuffle Library</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="scry">Scry...</div>
+            <div class="ctx-item" data-action="search_library">Search Library...</div>
+        </div>
+        <div class="ctx-separator"></div>
+        <div class="ctx-group">
+            <div class="ctx-item" data-action="mulligan">Mulligan</div>
+        </div>
+    </div>
+
+    <!-- ============ HOVER CARD PREVIEW ============ -->
+    <div id="card-preview" class="card-preview" style="display: none;">
+        <div class="card-preview-faces">
+            <div class="card-preview-face card-preview-front">
+                <img id="card-preview-img" src="" alt="Card Preview">
+                <div id="card-preview-fallback" class="card-preview-fallback" style="display: none;">
+                    <div class="preview-name" id="preview-name"></div>
+                    <div class="preview-mana" id="preview-mana"></div>
+                    <div class="preview-type" id="preview-type"></div>
+                    <div class="preview-text" id="preview-text"></div>
+                    <div class="preview-pt" id="preview-pt"></div>
+                </div>
+                <div class="card-preview-face-overlay" id="front-face-overlay"></div>
+            </div>
+            <div class="card-preview-face card-preview-back" id="card-preview-back" style="display: none;">
+                <img id="card-preview-back-img" src="" alt="Back Face">
+                <div class="card-preview-face-overlay" id="back-face-overlay"></div>
+                <div class="card-preview-face-icon">&#8634;</div>
+            </div>
+        </div>
+        <div id="card-preview-status" class="card-preview-status"></div>
+    </div>
+
+    <!-- ============ SCRY MODAL ============ -->
+    <div id="scry-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content scry-modal-content">
+            <h3>Scry</h3>
+            <p class="scry-instructions">Drag cards between areas or click to toggle. Cards on top will stay in order (first = top of library).</p>
+            <div class="scry-columns">
+                <div class="scry-column scry-top">
+                    <h4>Put on Top</h4>
+                    <div class="scry-card-list" id="scry-top-list"></div>
+                </div>
+                <div class="scry-column scry-bottom">
+                    <h4>Put on Bottom</h4>
+                    <div class="scry-card-list" id="scry-bottom-list"></div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="scry-confirm" class="btn btn-primary">Confirm Scry</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ SEARCH LIBRARY MODAL ============ -->
+    <div id="search-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content search-modal-content">
+            <h3>Search Library</h3>
+            <input type="text" id="search-filter" class="search-input" placeholder="Type to filter cards...">
+            <div class="search-card-list" id="search-card-list"></div>
+            <div class="search-destination" id="search-destination" style="display: none;">
+                <p>Send <strong id="search-selected-name"></strong> to:</p>
+                <div class="search-dest-buttons">
+                    <button class="btn btn-sm" data-dest="hand">Hand</button>
+                    <button class="btn btn-sm" data-dest="battlefield">Battlefield</button>
+                    <button class="btn btn-sm" data-dest="graveyard">Graveyard</button>
+                    <button class="btn btn-sm" data-dest="exile">Exile</button>
+                    <button class="btn btn-sm" data-dest="command_zone">Command Zone</button>
+                    <button class="btn btn-sm" data-dest="library_top">Library (top)</button>
+                    <button class="btn btn-sm" data-dest="library_bottom">Library (bottom)</button>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="search-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ ZONE VIEWER MODAL (Graveyard/Exile) ============ -->
+    <div id="zone-viewer-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content zone-viewer-content">
+            <h3 id="zone-viewer-title">Zone</h3>
+            <div class="zone-viewer-list" id="zone-viewer-list"></div>
+            <div class="modal-actions">
+                <button id="zone-viewer-close" class="btn btn-secondary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ PRINTING PICKER MODAL ============ -->
+    <div id="printing-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content printing-modal-content">
+            <h3>Choose Printing &mdash; <span id="printing-card-name"></span></h3>
+            <div id="printing-loading" class="printing-loading">Loading printings from Scryfall...</div>
+            <div id="printing-grid" class="printing-grid"></div>
+            <div class="modal-actions">
+                <button id="printing-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ CARD PICKER MODAL (autocomplete) ============ -->
+    <div id="card-picker-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content card-picker-content">
+            <h3 id="card-picker-title">Karte suchen</h3>
+            <input type="text" id="card-picker-input" class="card-picker-input" placeholder="Kartenname eingeben..." autocomplete="off" spellcheck="false">
+            <div id="card-picker-results" class="card-picker-results"></div>
+            <div class="modal-actions">
+                <button id="card-picker-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ LINK EXILE PROMPT ============ -->
+    <div id="link-exile-prompt" class="link-exile-prompt" style="display: none;">
+        Click a card on the battlefield to link the exiled card to it. <button id="link-exile-cancel" class="btn btn-sm btn-secondary">Cancel</button>
+    </div>
+
+    <!-- ============ ATTACH CARD PROMPT ============ -->
+    <div id="attach-card-prompt" class="attach-card-prompt" style="display: none;">
+        Click a card on the battlefield to attach the Aura/Equipment to it. <button id="attach-card-cancel" class="btn btn-sm btn-secondary">Cancel</button>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/ws.js"></script>
+    <script src="/static/js/dragdrop.js"></script>
+    <script src="/static/js/board.js"></script>
+</body>
+</html>

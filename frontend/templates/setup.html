@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Board State Tracker - New Game</title>
+    <link rel="stylesheet" href="/static/css/common.css">
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .setup-container {
+            width: 100%;
+            max-width: 640px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .setup-header {
+            text-align: center;
+        }
+
+        .setup-header h1 {
+            font-size: 24px;
+            color: var(--accent);
+            margin-bottom: 4px;
+        }
+
+        .setup-header p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .setup-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .setup-card h2 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"] {
+            width: 100%;
+        }
+
+        .form-group textarea {
+            width: 100%;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .form-row > * {
+            flex: 1;
+        }
+
+        /* Scryfall Status */
+        .scryfall-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .scryfall-info {
+            flex: 1;
+            font-size: 13px;
+            min-width: 200px;
+        }
+
+        .scryfall-info.cached {
+            color: var(--success);
+        }
+
+        .scryfall-info.not-cached {
+            color: var(--warning);
+        }
+
+        .scryfall-progress {
+            width: 100%;
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+            display: none;
+        }
+
+        .scryfall-progress.visible {
+            display: block;
+        }
+
+        .progress-bar-track {
+            width: 100%;
+            height: 6px;
+            background: var(--bg-card);
+            border-radius: 3px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.3s;
+            animation: progressPulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes progressPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* Deck Upload */
+        .deck-upload-area {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .file-upload-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            background: var(--bg-card);
+            border: 1px dashed var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .file-upload-label:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--text-muted);
+        }
+
+        .file-upload-label input[type="file"] {
+            display: none;
+        }
+
+        .deck-result {
+            font-size: 13px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .deck-result.visible {
+            display: block;
+        }
+
+        .deck-result.success {
+            background: rgba(46, 204, 113, 0.1);
+            border: 1px solid rgba(46, 204, 113, 0.3);
+            color: var(--success);
+        }
+
+        .deck-result.error {
+            background: rgba(231, 76, 60, 0.1);
+            border: 1px solid rgba(231, 76, 60, 0.3);
+            color: var(--error);
+        }
+
+        .deck-result .warnings {
+            color: var(--warning);
+            margin-top: 4px;
+            font-size: 12px;
+        }
+
+        /* Game Settings */
+        .radio-group {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .radio-option input[type="radio"] {
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        /* Coin Flip */
+        .coin-flip-btn {
+            position: relative;
+        }
+
+        .coin-flip-btn.flipping {
+            pointer-events: none;
+        }
+
+        @keyframes coinSpin {
+            0% { transform: rotateY(0deg); }
+            100% { transform: rotateY(1080deg); }
+        }
+
+        .coin-result {
+            font-size: 13px;
+            color: var(--accent);
+            font-weight: 600;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .coin-result.visible {
+            opacity: 1;
+        }
+
+        /* Start Game */
+        .start-game-section {
+            text-align: center;
+        }
+
+        .start-game-btn {
+            font-size: 18px;
+            padding: 14px 40px;
+            border-radius: 10px;
+        }
+
+        .start-error {
+            color: var(--error);
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+
+        .start-error.visible {
+            display: block;
+        }
+
+        /* Saved Decks */
+        .saved-deck-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .saved-deck-row select {
+            flex: 1;
+            padding: 6px 10px;
+            font-size: 13px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
+        .saved-deck-row .btn-small {
+            white-space: nowrap;
+        }
+
+        /* Commander select */
+        .commander-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 8px;
+        }
+
+        .commander-row select {
+            flex: 1;
+            padding: 6px 10px;
+            font-size: 13px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
+        /* Save deck row */
+        .save-deck-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 8px;
+        }
+
+        .save-deck-row input {
+            flex: 1;
+        }
+
+        .post-parse-section {
+            display: none;
+        }
+
+        .post-parse-section.visible {
+            display: block;
+        }
+
+        .btn-danger {
+            background: var(--error);
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            opacity: 0.85;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="setup-container">
+
+        <!-- Header -->
+        <div class="setup-header">
+            <h1>MTG Board State Tracker</h1>
+            <p>Set up a new game</p>
+        </div>
+
+        <!-- Scryfall Cache Status -->
+        <div class="setup-card">
+            <h2>Card Database</h2>
+            <div class="scryfall-status">
+                <div class="scryfall-info" id="scryfall-info">Checking card database...</div>
+                <button class="btn btn-small" id="scryfall-btn" style="display: none;">Download</button>
+            </div>
+            <div class="scryfall-progress" id="scryfall-progress">
+                <span id="scryfall-progress-text">Downloading card database...</span>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="scryfall-progress-bar"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player 1 Setup -->
+        <div class="setup-card">
+            <h2>Player 1</h2>
+            <div class="form-group">
+                <label for="p1-name">Name</label>
+                <input type="text" id="p1-name" value="Andre" placeholder="Player name">
+            </div>
+            <div class="form-group">
+                <label>Load Saved Deck</label>
+                <div class="saved-deck-row">
+                    <select id="p1-saved-decks"><option value="">-- select --</option></select>
+                    <button class="btn btn-small" id="p1-load-btn" disabled>Load</button>
+                    <button class="btn btn-small btn-danger" id="p1-delete-btn" disabled title="Delete saved deck">Del</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Decklist</label>
+                <div class="deck-upload-area">
+                    <label class="file-upload-label">
+                        Upload .txt / .dec
+                        <input type="file" id="p1-file" accept=".txt,.dec,.dck,.mwDeck">
+                    </label>
+                    <span class="text-muted" style="font-size: 12px;">or paste below</span>
+                </div>
+                <textarea id="p1-deck" rows="8" placeholder="1 Sol Ring&#10;1 Command Tower&#10;1 Lightning Bolt&#10;..."></textarea>
+            </div>
+            <div class="form-row">
+                <button class="btn" id="p1-parse-btn">Parse Deck</button>
+            </div>
+            <div class="deck-result" id="p1-result"></div>
+            <div class="post-parse-section" id="p1-post-parse">
+                <div class="form-group">
+                    <label>Commander</label>
+                    <div class="commander-row">
+                        <select id="p1-commander"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Save Deck As</label>
+                    <div class="save-deck-row">
+                        <input type="text" id="p1-save-name" placeholder="Deck name...">
+                        <button class="btn btn-small" id="p1-save-btn">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player 2 Setup -->
+        <div class="setup-card">
+            <h2>Player 2</h2>
+            <div class="form-group">
+                <label for="p2-name">Name</label>
+                <input type="text" id="p2-name" value="Mia" placeholder="Player name">
+            </div>
+            <div class="form-group">
+                <label>Load Saved Deck</label>
+                <div class="saved-deck-row">
+                    <select id="p2-saved-decks"><option value="">-- select --</option></select>
+                    <button class="btn btn-small" id="p2-load-btn" disabled>Load</button>
+                    <button class="btn btn-small btn-danger" id="p2-delete-btn" disabled title="Delete saved deck">Del</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Decklist</label>
+                <div class="deck-upload-area">
+                    <label class="file-upload-label">
+                        Upload .txt / .dec
+                        <input type="file" id="p2-file" accept=".txt,.dec,.dck,.mwDeck">
+                    </label>
+                    <span class="text-muted" style="font-size: 12px;">or paste below</span>
+                </div>
+                <textarea id="p2-deck" rows="8" placeholder="1 Sol Ring&#10;1 Command Tower&#10;1 Lightning Bolt&#10;..."></textarea>
+            </div>
+            <div class="form-row">
+                <button class="btn" id="p2-parse-btn">Parse Deck</button>
+            </div>
+            <div class="deck-result" id="p2-result"></div>
+            <div class="post-parse-section" id="p2-post-parse">
+                <div class="form-group">
+                    <label>Commander</label>
+                    <div class="commander-row">
+                        <select id="p2-commander"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Save Deck As</label>
+                    <div class="save-deck-row">
+                        <input type="text" id="p2-save-name" placeholder="Deck name...">
+                        <button class="btn btn-small" id="p2-save-btn">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Settings -->
+        <div class="setup-card">
+            <h2>Game Settings</h2>
+            <div class="form-group">
+                <label for="starting-life">Starting Life Total</label>
+                <input type="number" id="starting-life" value="20" min="1" max="100" style="width: 100px;">
+            </div>
+            <div class="form-group">
+                <label>First Player</label>
+                <div class="radio-group">
+                    <label class="radio-option">
+                        <input type="radio" name="first-player" value="0" checked>
+                        <span id="radio-p1-label">Player 1</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="first-player" value="1">
+                        <span id="radio-p2-label">Player 2</span>
+                    </label>
+                    <button class="btn btn-small coin-flip-btn" id="coin-flip-btn">Coin Flip</button>
+                    <span class="coin-result" id="coin-result"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Start Game -->
+        <div class="setup-card start-game-section">
+            <button class="btn btn-primary start-game-btn" id="start-game-btn" disabled>Start Game</button>
+            <div class="start-error" id="start-error"></div>
+        </div>
+
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // ---- State ----
+        let scryfallReady = false;
+        let deck1Parsed = false;
+        let deck2Parsed = false;
+        let deck1Data = null;
+        let deck2Data = null;
+
+        // ---- DOM refs ----
+        const scryfallInfoEl = document.getElementById('scryfall-info');
+        const scryfallBtn = document.getElementById('scryfall-btn');
+        const scryfallProgress = document.getElementById('scryfall-progress');
+        const scryfallProgressText = document.getElementById('scryfall-progress-text');
+        const scryfallProgressBar = document.getElementById('scryfall-progress-bar');
+        const startBtn = document.getElementById('start-game-btn');
+        const startError = document.getElementById('start-error');
+
+        // ---- Sync player names with radio labels ----
+        const p1NameInput = document.getElementById('p1-name');
+        const p2NameInput = document.getElementById('p2-name');
+        const radioP1Label = document.getElementById('radio-p1-label');
+        const radioP2Label = document.getElementById('radio-p2-label');
+
+        p1NameInput.addEventListener('input', () => {
+            radioP1Label.textContent = p1NameInput.value || 'Player 1';
+        });
+        p2NameInput.addEventListener('input', () => {
+            radioP2Label.textContent = p2NameInput.value || 'Player 2';
+        });
+
+        // Trigger initial label sync
+        radioP1Label.textContent = p1NameInput.value || 'Player 1';
+        radioP2Label.textContent = p2NameInput.value || 'Player 2';
+
+        // ================================================================
+        // Scryfall Status
+        // ================================================================
+
+        function checkScryfallStatus() {
+            fetch('/api/scryfall/status')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.cached) {
+                        scryfallReady = true;
+                        scryfallInfoEl.className = 'scryfall-info cached';
+                        const count = data.count ? data.count.toLocaleString() : '?';
+                        const date = data.last_updated || 'Unknown';
+                        scryfallInfoEl.textContent = 'Card database: ' + count + ' cards (last updated: ' + date + ')';
+                        scryfallBtn.textContent = 'Update';
+                        scryfallBtn.style.display = '';
+                        updateStartButton();
+                    } else {
+                        scryfallReady = false;
+                        scryfallInfoEl.className = 'scryfall-info not-cached';
+                        scryfallInfoEl.textContent = 'Card database not found.';
+                        scryfallBtn.textContent = 'Download Now';
+                        scryfallBtn.style.display = '';
+                        updateStartButton();
+                    }
+                })
+                .catch(err => {
+                    scryfallInfoEl.textContent = 'Could not check card database status.';
+                    scryfallInfoEl.className = 'scryfall-info not-cached';
+                    console.error('Scryfall status check failed:', err);
+                });
+        }
+
+        scryfallBtn.addEventListener('click', () => {
+            scryfallBtn.disabled = true;
+            scryfallProgress.classList.add('visible');
+            scryfallProgressText.textContent = 'Downloading card database...';
+            scryfallProgressBar.style.width = '10%';
+
+            fetch('/api/scryfall/download', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        scryfallProgressBar.style.width = '100%';
+                        scryfallProgressText.textContent = 'Download complete!';
+                        scryfallReady = true;
+                        setTimeout(() => {
+                            scryfallProgress.classList.remove('visible');
+                            checkScryfallStatus();
+                        }, 1500);
+                    } else {
+                        scryfallProgressText.textContent = 'Download failed: ' + (data.error || 'Unknown error');
+                        scryfallProgressBar.style.width = '0%';
+                        scryfallBtn.disabled = false;
+                    }
+                })
+                .catch(err => {
+                    scryfallProgressText.textContent = 'Download failed. Check connection.';
+                    scryfallProgressBar.style.width = '0%';
+                    scryfallBtn.disabled = false;
+                    console.error('Scryfall download failed:', err);
+                });
+
+            // Simulate progress while waiting
+            let progress = 10;
+            const progressInterval = setInterval(() => {
+                if (progress < 85) {
+                    progress += Math.random() * 8;
+                    scryfallProgressBar.style.width = Math.min(progress, 85) + '%';
+                } else {
+                    clearInterval(progressInterval);
+                }
+            }, 500);
+        });
+
+        checkScryfallStatus();
+
+        // ================================================================
+        // Saved Decks
+        // ================================================================
+
+        function refreshSavedDecks() {
+            fetch('/api/decks/list')
+                .then(res => res.json())
+                .then(data => {
+                    var decks = data.decks || [];
+                    [1, 2].forEach(function (pn) {
+                        var sel = document.getElementById('p' + pn + '-saved-decks');
+                        var loadBtn = document.getElementById('p' + pn + '-load-btn');
+                        var delBtn = document.getElementById('p' + pn + '-delete-btn');
+                        var val = sel.value;
+                        sel.innerHTML = '<option value="">-- select --</option>';
+                        decks.forEach(function (d) {
+                            var label = d.name + ' (' + d.card_count + ' cards' + (d.commander ? ', ' + d.commander : '') + ')';
+                            var opt = document.createElement('option');
+                            opt.value = d.filename;
+                            opt.textContent = label;
+                            sel.appendChild(opt);
+                        });
+                        if (val) sel.value = val;
+                        loadBtn.disabled = !sel.value;
+                        delBtn.disabled = !sel.value;
+                    });
+                })
+                .catch(function () {});
+        }
+
+        [1, 2].forEach(function (pn) {
+            var sel = document.getElementById('p' + pn + '-saved-decks');
+            var loadBtn = document.getElementById('p' + pn + '-load-btn');
+            var delBtn = document.getElementById('p' + pn + '-delete-btn');
+
+            sel.addEventListener('change', function () {
+                loadBtn.disabled = !sel.value;
+                delBtn.disabled = !sel.value;
+            });
+
+            loadBtn.addEventListener('click', function () {
+                if (!sel.value) return;
+                fetch('/api/decks/load?filename=' + encodeURIComponent(sel.value))
+                    .then(function (res) { return res.json(); })
+                    .then(function (data) {
+                        if (!data.success) return;
+                        var deck = data.deck;
+                        document.getElementById('p' + pn + '-deck').value = deck.decklist_text || '';
+                        // Auto-parse after loading
+                        parseDeck(pn, deck.commander_name);
+                    })
+                    .catch(function (err) { console.error('Load deck failed:', err); });
+            });
+
+            delBtn.addEventListener('click', function () {
+                if (!sel.value) return;
+                var selText = sel.options[sel.selectedIndex].textContent;
+                if (!confirm('Delete deck "' + selText + '"?')) return;
+                fetch('/api/decks/' + encodeURIComponent(sel.value), { method: 'DELETE' })
+                    .then(function (res) { return res.json(); })
+                    .then(function () { refreshSavedDecks(); })
+                    .catch(function (err) { console.error('Delete deck failed:', err); });
+            });
+        });
+
+        refreshSavedDecks();
+
+        // ================================================================
+        // File Upload
+        // ================================================================
+
+        document.getElementById('p1-file').addEventListener('change', (e) => {
+            handleFileUpload(e.target, document.getElementById('p1-deck'));
+        });
+
+        document.getElementById('p2-file').addEventListener('change', (e) => {
+            handleFileUpload(e.target, document.getElementById('p2-deck'));
+        });
+
+        function handleFileUpload(fileInput, textarea) {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                textarea.value = e.target.result;
+            };
+            reader.onerror = () => {
+                console.error('Failed to read file');
+            };
+            reader.readAsText(file);
+        }
+
+        // ================================================================
+        // Parse Deck
+        // ================================================================
+
+        document.getElementById('p1-parse-btn').addEventListener('click', () => {
+            parseDeck(1);
+        });
+
+        document.getElementById('p2-parse-btn').addEventListener('click', () => {
+            parseDeck(2);
+        });
+
+        function parseDeck(playerNum, presetCommander) {
+            const deckText = document.getElementById('p' + playerNum + '-deck').value.trim();
+            const resultEl = document.getElementById('p' + playerNum + '-result');
+
+            if (!deckText) {
+                showDeckResult(resultEl, 'error', 'Please enter or upload a decklist first.');
+                return;
+            }
+
+            const parseBtn = document.getElementById('p' + playerNum + '-parse-btn');
+            parseBtn.disabled = true;
+            parseBtn.textContent = 'Parsing...';
+
+            fetch('/api/deck/parse', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ decklist: deckText })
+            })
+            .then(res => res.json())
+            .then(data => {
+                parseBtn.disabled = false;
+                parseBtn.textContent = 'Parse Deck';
+
+                if (data.success) {
+                    // Use preset commander (from saved deck) or parsed one
+                    var activeCommander = presetCommander || data.commander || null;
+
+                    let msg = 'Deck loaded: ' + data.card_count + ' cards';
+                    if (activeCommander) {
+                        msg += ' | Commander: ' + activeCommander;
+                    }
+
+                    let warningsHtml = '';
+                    if (data.warnings && data.warnings.length > 0) {
+                        warningsHtml = '<div class="warnings">';
+                        data.warnings.forEach(w => {
+                            warningsHtml += '<div>Warning: ' + escapeHtml(w) + '</div>';
+                        });
+                        warningsHtml += '</div>';
+                    }
+
+                    showDeckResult(resultEl, 'success', msg, warningsHtml);
+
+                    if (playerNum === 1) {
+                        deck1Parsed = true;
+                        deck1Data = data;
+                    } else {
+                        deck2Parsed = true;
+                        deck2Data = data;
+                    }
+                    updateStartButton();
+
+                    // Collect card names for commander dropdown
+                    var names = data.card_names;
+                    if (!names || !names.length) {
+                        // Fallback: extract from parsed data
+                        names = [];
+                        var mainCards = (data.data && data.data.main) || [];
+                        mainCards.forEach(function (c) {
+                            if (c.name && names.indexOf(c.name) === -1) names.push(c.name);
+                        });
+                    }
+
+                    // Show post-parse section (commander + save)
+                    showPostParse(playerNum, names, activeCommander);
+                } else {
+                    showDeckResult(resultEl, 'error', 'Parse failed: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                parseBtn.disabled = false;
+                parseBtn.textContent = 'Parse Deck';
+                showDeckResult(resultEl, 'error', 'Parse request failed. Is the server running?');
+                console.error('Deck parse failed:', err);
+            });
+        }
+
+        // ================================================================
+        // Post-Parse: Commander Dropdown + Save Deck
+        // ================================================================
+
+        function showPostParse(playerNum, cardNames, activeCommander) {
+            var section = document.getElementById('p' + playerNum + '-post-parse');
+            var cmdSelect = document.getElementById('p' + playerNum + '-commander');
+
+            // Populate commander dropdown
+            cmdSelect.innerHTML = '<option value="">-- none --</option>';
+            var sorted = cardNames.slice().sort();
+            sorted.forEach(function (name) {
+                var opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                if (activeCommander && name === activeCommander) opt.selected = true;
+                cmdSelect.appendChild(opt);
+            });
+
+            section.classList.add('visible');
+        }
+
+        // Save deck buttons
+        [1, 2].forEach(function (pn) {
+            document.getElementById('p' + pn + '-save-btn').addEventListener('click', function () {
+                var nameInput = document.getElementById('p' + pn + '-save-name');
+                var deckName = nameInput.value.trim();
+                if (!deckName) { alert('Please enter a deck name.'); return; }
+
+                var deckText = document.getElementById('p' + pn + '-deck').value.trim();
+                var cmdSelect = document.getElementById('p' + pn + '-commander');
+                var commanderName = cmdSelect.value || null;
+                var deckData = pn === 1 ? deck1Data : deck2Data;
+                var cardCount = deckData ? deckData.card_count : 0;
+
+                fetch('/api/decks/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: deckName,
+                        decklist_text: deckText,
+                        commander_name: commanderName,
+                        card_count: cardCount
+                    })
+                })
+                .then(function (res) { return res.json(); })
+                .then(function (data) {
+                    if (data.success) {
+                        nameInput.value = '';
+                        refreshSavedDecks();
+                    } else {
+                        alert('Save failed: ' + (data.error || 'Unknown'));
+                    }
+                })
+                .catch(function (err) { alert('Save failed.'); console.error(err); });
+            });
+        });
+
+        function showDeckResult(el, type, message, extraHtml) {
+            el.className = 'deck-result visible ' + type;
+            el.innerHTML = escapeHtml(message) + (extraHtml || '');
+        }
+
+        // ================================================================
+        // Start Button State
+        // ================================================================
+
+        function updateStartButton() {
+            const ready = scryfallReady && deck1Parsed && deck2Parsed;
+            startBtn.disabled = !ready;
+
+            if (!ready) {
+                const reasons = [];
+                if (!scryfallReady) reasons.push('card database not downloaded');
+                if (!deck1Parsed) reasons.push('Player 1 deck not parsed');
+                if (!deck2Parsed) reasons.push('Player 2 deck not parsed');
+                startError.textContent = 'Required: ' + reasons.join(', ');
+                startError.classList.add('visible');
+            } else {
+                startError.classList.remove('visible');
+            }
+        }
+
+        updateStartButton();
+
+        // ================================================================
+        // Coin Flip
+        // ================================================================
+
+        document.getElementById('coin-flip-btn').addEventListener('click', () => {
+            const btn = document.getElementById('coin-flip-btn');
+            const resultEl = document.getElementById('coin-result');
+
+            btn.classList.add('flipping');
+            resultEl.classList.remove('visible');
+            resultEl.textContent = '';
+
+            // Animate briefly then show result
+            let flips = 0;
+            const maxFlips = 10;
+            const flipInterval = setInterval(() => {
+                flips++;
+                const tempWinner = Math.random() < 0.5 ? 0 : 1;
+                const tempName = tempWinner === 0
+                    ? (p1NameInput.value || 'Player 1')
+                    : (p2NameInput.value || 'Player 2');
+                resultEl.textContent = tempName;
+                resultEl.classList.add('visible');
+
+                if (flips >= maxFlips) {
+                    clearInterval(flipInterval);
+
+                    // Final result
+                    const winner = Math.random() < 0.5 ? 0 : 1;
+                    const winnerName = winner === 0
+                        ? (p1NameInput.value || 'Player 1')
+                        : (p2NameInput.value || 'Player 2');
+
+                    resultEl.textContent = winnerName + ' goes first!';
+
+                    // Select the radio button
+                    const radios = document.querySelectorAll('input[name="first-player"]');
+                    radios.forEach(r => {
+                        r.checked = parseInt(r.value) === winner;
+                    });
+
+                    btn.classList.remove('flipping');
+                }
+            }, 120);
+        });
+
+        // ================================================================
+        // Start Game
+        // ================================================================
+
+        startBtn.addEventListener('click', () => {
+            if (startBtn.disabled) return;
+
+            const firstPlayerRadio = document.querySelector('input[name="first-player"]:checked');
+            const firstPlayer = firstPlayerRadio ? parseInt(firstPlayerRadio.value) : 0;
+
+            // Get commander selections from dropdowns
+            var p1Commander = document.getElementById('p1-commander').value || null;
+            var p2Commander = document.getElementById('p2-commander').value || null;
+
+            // Send already-parsed card data instead of raw text to avoid re-parsing
+            const payload = {
+                players: [
+                    {
+                        name: p1NameInput.value || 'Player 1',
+                        decklist: deck1Data && deck1Data.data ? deck1Data.data.main : document.getElementById('p1-deck').value.trim(),
+                        commander_name: p1Commander
+                    },
+                    {
+                        name: p2NameInput.value || 'Player 2',
+                        decklist: deck2Data && deck2Data.data ? deck2Data.data.main : document.getElementById('p2-deck').value.trim(),
+                        commander_name: p2Commander
+                    }
+                ],
+                starting_life: parseInt(document.getElementById('starting-life').value) || 20,
+                first_player: firstPlayer
+            };
+
+            startBtn.disabled = true;
+            startBtn.textContent = 'Starting...';
+
+            fetch('/api/game/new', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    // Open Command Center in a new window
+                    window.open('/command', 'mtg-command');
+                    // Navigate current tab to board
+                    window.location.href = '/board';
+                } else {
+                    startBtn.disabled = false;
+                    startBtn.textContent = 'Start Game';
+                    startError.textContent = 'Failed to start game: ' + (data.error || 'Unknown error');
+                    startError.classList.add('visible');
+                }
+            })
+            .catch(err => {
+                startBtn.disabled = false;
+                startBtn.textContent = 'Start Game';
+                startError.textContent = 'Failed to connect to server.';
+                startError.classList.add('visible');
+                console.error('Game start failed:', err);
+            });
+        });
+
+        // ================================================================
+        // Utility
+        // ================================================================
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    });
+    </script>
+</body>
+</html>

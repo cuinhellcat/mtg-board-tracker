@@ -1,0 +1,398 @@
+/* ============================================================
+   common.css - Shared styles for MTG Board State Tracker
+   Used by: board.html, command.html, setup.html
+   ============================================================ */
+
+:root {
+    --bg-primary: #1c1c1c;
+    --bg-secondary: #222222;
+    --bg-card: #2a2a2a;
+    --bg-card-hover: #353535;
+    --accent: #e94560;
+    --accent-glow: rgba(233, 69, 96, 0.3);
+    --text-primary: #e0e0e0;
+    --text-secondary: #909090;
+    --text-muted: #585858;
+    --border: #383838;
+    --success: #2ecc71;
+    --warning: #f39c12;
+    --error: #e74c3c;
+
+    /* Mana colors */
+    --mana-white: #f9faf4;
+    --mana-blue: #0e68ab;
+    --mana-black: #4a4a4a;
+    --mana-red: #d3202a;
+    --mana-green: #00733e;
+    --mana-gold: #c7b037;
+    --mana-colorless: #888;
+
+    /* Zone colors (neutral) */
+    --zone-battlefield: rgba(255, 255, 255, 0.03);
+    --zone-hand: rgba(255, 255, 255, 0.05);
+    --zone-graveyard: rgba(60, 30, 30, 0.4);
+    --zone-exile: rgba(50, 40, 55, 0.4);
+    --zone-command: rgba(255, 255, 255, 0.04);
+    --zone-library: rgba(20, 20, 20, 0.5);
+}
+
+/* ---- Reset & Base ---- */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---- Custom Scrollbar ---- */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* Firefox scrollbar */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) var(--bg-secondary);
+}
+
+/* ---- Typography ---- */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* ---- Buttons ---- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--text-muted);
+}
+
+.btn:active {
+    transform: scale(0.97);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #d63a54;
+    border-color: #d63a54;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.btn-danger {
+    background: var(--error);
+    border-color: var(--error);
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #c0392b;
+    border-color: #c0392b;
+    box-shadow: 0 0 12px rgba(231, 76, 60, 0.3);
+}
+
+.btn-small {
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+/* ---- Inputs ---- */
+.input,
+input[type="text"],
+input[type="number"],
+input[type="password"] {
+    padding: 8px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.textarea,
+textarea {
+    padding: 8px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: none;
+    resize: vertical;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.textarea:focus,
+textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+/* ---- Modal ---- */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+}
+
+.modal-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 90vw;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-content h2 {
+    margin-bottom: 16px;
+    font-size: 18px;
+}
+
+/* ---- Badge ---- */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 12px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+
+.badge-success {
+    background: rgba(46, 204, 113, 0.15);
+    color: var(--success);
+    border-color: rgba(46, 204, 113, 0.3);
+}
+
+.badge-warning {
+    background: rgba(243, 156, 18, 0.15);
+    color: var(--warning);
+    border-color: rgba(243, 156, 18, 0.3);
+}
+
+.badge-error {
+    background: rgba(231, 76, 60, 0.15);
+    color: var(--error);
+    border-color: rgba(231, 76, 60, 0.3);
+}
+
+/* ---- Mana Symbols ---- */
+.mana-symbol {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 700;
+    margin: 0 1px;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.mana-W {
+    background: var(--mana-white);
+    color: #333;
+    text-shadow: none;
+}
+
+.mana-U {
+    background: var(--mana-blue);
+    color: #fff;
+}
+
+.mana-B {
+    background: var(--mana-black);
+    color: #ccc;
+}
+
+.mana-R {
+    background: var(--mana-red);
+    color: #fff;
+}
+
+.mana-G {
+    background: var(--mana-green);
+    color: #fff;
+}
+
+.mana-C {
+    background: var(--mana-colorless);
+    color: #fff;
+}
+
+/* Generic / numeric mana */
+.mana-generic {
+    background: #6b6b6b;
+    color: #fff;
+}
+
+/* ---- Connection Status Indicator ---- */
+.connection-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--error);
+    transition: background 0.3s;
+}
+
+.connection-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 6px rgba(46, 204, 113, 0.5);
+}
+
+/* ---- Utility ---- */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+.flex {
+    display: flex;
+}
+
+.flex-col {
+    display: flex;
+    flex-direction: column;
+}
+
+.items-center {
+    align-items: center;
+}
+
+.justify-between {
+    justify-content: space-between;
+}
+
+.gap-sm { gap: 6px; }
+.gap-md { gap: 12px; }
+.gap-lg { gap: 20px; }
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.text-secondary {
+    color: var(--text-secondary);
+}
+
+.monospace {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Board State Tracker</title>
+    <link rel="stylesheet" href="/static/css/common.css">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            gap: 0;
+        }
+
+        .landing-header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .landing-header h1 {
+            font-size: 28px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .landing-header p {
+            font-size: 13px;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .landing-actions {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            width: 100%;
+            max-width: 420px;
+        }
+
+        /* Last game card */
+        .last-game-card {
+            width: 100%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            display: none;
+            flex-direction: column;
+            gap: 12px;
+            transition: border-color 0.2s;
+        }
+
+        .last-game-card.visible {
+            display: flex;
+        }
+
+        .last-game-card:hover {
+            border-color: var(--accent);
+        }
+
+        .last-game-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .last-game-players {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .last-game-meta {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .btn-resume {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: opacity 0.15s;
+            text-decoration: none;
+            text-align: center;
+            display: block;
+        }
+
+        .btn-resume:hover {
+            opacity: 0.85;
+        }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            color: var(--text-muted);
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        .btn-new-game {
+            width: 100%;
+            padding: 14px;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            text-decoration: none;
+            text-align: center;
+            display: block;
+        }
+
+        .btn-new-game:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--text-secondary);
+        }
+
+        .archive-link {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-decoration: none;
+            letter-spacing: 0.5px;
+            margin-top: 8px;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+
+        .archive-link:hover {
+            color: var(--text-secondary);
+        }
+
+        /* Archive panel */
+        .archive-panel {
+            display: none;
+            width: 100%;
+            max-width: 420px;
+            margin-top: 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .archive-panel.visible {
+            display: block;
+        }
+
+        .archive-title {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+
+        .archive-empty {
+            font-size: 13px;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 12px 0;
+        }
+
+        .archive-item {
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            margin-bottom: 6px;
+            background: var(--bg-card);
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+
+        .archive-item:hover {
+            border-color: var(--accent);
+            background: var(--bg-card-hover);
+        }
+
+        .archive-item-players {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .archive-item-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        #no-save-hint {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="landing-header">
+        <h1>MTG Board State Tracker</h1>
+        <p>Duel Commander</p>
+    </div>
+
+    <div class="landing-actions">
+        <!-- Last game card (shown if autosave exists) -->
+        <div class="last-game-card" id="last-game-card">
+            <div class="last-game-label">Letztes Spiel</div>
+            <div class="last-game-players" id="last-game-players">—</div>
+            <div class="last-game-meta" id="last-game-meta">—</div>
+            <a href="#" class="btn-resume" id="btn-resume" onclick="resumeGame(event)">→ Weiterspielen</a>
+        </div>
+
+        <span id="no-save-hint">Kein gespeichertes Spiel vorhanden.</span>
+
+        <div class="divider" id="divider" style="display:none;">oder</div>
+
+        <a href="/setup" class="btn-new-game">+ Neues Spiel</a>
+
+        <span class="archive-link" id="archive-toggle">Archiv anzeigen</span>
+    </div>
+
+    <div class="archive-panel" id="archive-panel">
+        <div class="archive-title">Archiv</div>
+        <div id="archive-list"><div class="archive-empty">Lade...</div></div>
+    </div>
+
+    <script>
+        // Monitor layout (hardcoded)
+        // Monitor 1: primary, 1920x1080 at (0,0) — Board
+        // Monitor 2: portrait, 1080x1920 at (1920,148) — Command Center
+        function resumeGame(e) {
+            e.preventDefault();
+            // Open Command Center in a new window (one popup per click is allowed)
+            window.open('/command', 'mtg-command');
+            // Navigate current tab to board
+            window.location.href = '/board';
+        }
+
+        // Load save summary
+        fetch('/api/save-summary')
+            .then(r => r.json())
+            .then(data => {
+                var card = document.getElementById('last-game-card');
+                var hint = document.getElementById('no-save-hint');
+                var divider = document.getElementById('divider');
+
+                if (data.summary) {
+                    var s = data.summary;
+                    var names = s.players.map(function(p) { return p.name; }).join(' vs ');
+                    var life = s.players.map(function(p) { return p.name + ' ' + p.life + ' LP'; }).join(' · ');
+                    document.getElementById('last-game-players').textContent = names;
+                    document.getElementById('last-game-meta').textContent =
+                        'Turn ' + s.turn + ' · ' + s.phase + ' · ' + life;
+                    card.classList.add('visible');
+                    divider.style.display = 'flex';
+                } else {
+                    hint.style.display = 'block';
+                }
+            });
+
+        // Archive toggle
+        document.getElementById('archive-toggle').addEventListener('click', function () {
+            var panel = document.getElementById('archive-panel');
+            if (panel.classList.contains('visible')) {
+                panel.classList.remove('visible');
+                this.textContent = 'Archiv anzeigen';
+                return;
+            }
+            panel.classList.add('visible');
+            this.textContent = 'Archiv schließen';
+
+            fetch('/api/archive')
+                .then(r => r.json())
+                .then(data => {
+                    var list = document.getElementById('archive-list');
+                    if (!data.games || data.games.length === 0) {
+                        list.innerHTML = '<div class="archive-empty">Keine archivierten Spiele.</div>';
+                        return;
+                    }
+                    list.innerHTML = data.games.map(function(g) {
+                        var names = g.players.map(function(p) { return p.name; }).join(' vs ');
+                        var date = g.archived_at.replace(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/, '$3.$2.$1 $4:$5');
+                        return '<div class="archive-item" data-filename="' + g.filename + '">' +
+                            '<div class="archive-item-players">' + names + '</div>' +
+                            '<div class="archive-item-meta">Turn ' + g.turn + ' · ' + g.phase + ' · ' + date + '</div>' +
+                            '</div>';
+                    }).join('');
+
+                    // Click to load archived game
+                    list.querySelectorAll('.archive-item').forEach(function(item) {
+                        item.addEventListener('click', function() {
+                            var filename = this.dataset.filename;
+                            if (!confirm('Dieses Spiel laden? Das aktuelle Spiel wird dabei archiviert.')) return;
+                            fetch('/api/archive/load', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({filename: filename})
+                            })
+                            .then(r => r.json())
+                            .then(d => {
+                                if (d.success) window.location.href = '/board';
+                                else alert('Fehler beim Laden des Spiels.');
+                            });
+                        });
+                    });
+                });
+        });
+    </script>
+</body>
+</html>
