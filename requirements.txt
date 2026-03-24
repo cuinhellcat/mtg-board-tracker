@@ -6,3 +6,5 @@ pydantic==2.10.4
 aiohttp==3.11.11
 aiofiles==24.1.0
 python-multipart==0.0.20
+pystray==0.19.5
+pillow==11.1.0
