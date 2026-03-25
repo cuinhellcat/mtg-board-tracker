@@ -25,7 +25,7 @@ from backend.scryfall import (
     update_cache,
 )
 from backend.decklist import parse_decklist
-from backend.snapshot import generate_snapshot
+from backend.snapshot import generate_bot_hand, generate_snapshot
 from backend.printing_prefs import get_preference, set_preference
 from backend.deck_storage import list_decks, save_deck, load_deck, delete_deck
 
@@ -532,9 +532,16 @@ async def websocket_endpoint(websocket: WebSocket):
             if action_type == "get_snapshot":
                 notes = action.get("notes", "")
                 rac = action.get("recent_actions_count", 1)
+                force_all_oracle = action.get("force_all_oracle", False)
                 action_log = [e.model_dump() for e in engine.state.action_log]
-                snapshot_text = generate_snapshot(engine.state, action_log, notes=notes, recent_actions_count=rac)
+                snapshot_text = generate_snapshot(engine.state, action_log, notes=notes, recent_actions_count=rac, force_all_oracle=force_all_oracle)
                 await websocket.send_json({"type": "snapshot", "text": snapshot_text})
+                continue
+
+            if action_type == "get_bot_hand":
+                force_all_oracle = action.get("force_all_oracle", False)
+                hand_text = generate_bot_hand(engine.state, force_all_oracle=force_all_oracle)
+                await websocket.send_json({"type": "bot_hand", "text": hand_text})
                 continue
 
             # Dispatch the action
@@ -592,12 +599,11 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    """Notify all clients to close their windows, then disconnect."""
+    """Notify all clients that server is shutting down."""
     shutdown_msg = json.dumps({"type": "server_shutdown"})
     for client in connected_clients.copy():
         try:
             await client.send_text(shutdown_msg)
-            await client.close()
         except Exception:
             pass
     connected_clients.clear()

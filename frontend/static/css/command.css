@@ -425,21 +425,66 @@ body {
 /* ---- 8. Button Bar ---- */
 .cmd-button-bar {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
     padding: 10px 12px;
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
     flex-shrink: 0;
+}
+
+.cmd-button-row-primary {
+    display: flex;
+}
+
+.btn-copy-main {
+    width: 100%;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+    background: #2d8a4e;
+    border-color: #2d8a4e;
+    color: #fff;
+}
+
+.btn-copy-main:hover {
+    background: #36a35d;
+    border-color: #36a35d;
+    box-shadow: 0 0 10px rgba(45, 138, 78, 0.4);
+}
+
+.cmd-button-row-secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     justify-content: center;
 }
 
-.cmd-button-bar .btn {
+.cmd-button-row-secondary .btn {
     flex: 1;
-    min-width: 90px;
+    min-width: 70px;
     max-width: 140px;
-    font-size: 12px;
-    padding: 6px 10px;
+    font-size: 11px;
+    padding: 5px 8px;
+}
+
+.cmd-button-row-secondary .btn-small {
+    font-size: 10px;
+    max-width: 170px;
+}
+
+@keyframes btn-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+.btn-blink {
+    animation: btn-blink 1.5s ease-in-out infinite;
+}
+
+.btn-blink:hover {
+    animation: none;
+    opacity: 1;
 }
 
 /* ---- Copy Toast ---- */
@@ -478,9 +523,14 @@ body {
         font-size: 12px;
     }
 
-    .cmd-button-bar .btn {
-        font-size: 11px;
-        padding: 5px 8px;
-        min-width: 70px;
+    .cmd-button-row-secondary .btn {
+        font-size: 10px;
+        padding: 4px 6px;
+        min-width: 60px;
+    }
+
+    .btn-copy-main {
+        font-size: 13px;
+        padding: 7px 12px;
     }
 }

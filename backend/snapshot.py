@@ -21,7 +21,7 @@ _SIMPLE_MANA_RE = re.compile(
 )
 
 
-def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", recent_actions_count: int = 1) -> str:
+def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", recent_actions_count: int = 1, force_all_oracle: bool = False) -> str:
     """
     Generate a board state snapshot from the LLM player's perspective.
 
@@ -39,6 +39,23 @@ def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", 
     if len(game_state.players) < 2:
         return "=== No game in progress ==="
 
+    # Temporarily force oracle text on all cards if requested
+    original_oracle_flags: dict = {}
+    if force_all_oracle:
+        for cid, card in game_state.cards.items():
+            original_oracle_flags[cid] = card.show_oracle_text
+            card.show_oracle_text = True
+
+    try:
+        return _generate_snapshot_inner(game_state, action_log, notes, recent_actions_count)
+    finally:
+        # Restore original flags
+        for cid, orig in original_oracle_flags.items():
+            if cid in game_state.cards:
+                game_state.cards[cid].show_oracle_text = orig
+
+
+def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str, recent_actions_count: int) -> str:
     llm_index = 1
     human_index = 0
     llm_player = game_state.players[llm_index]
@@ -486,3 +503,26 @@ def _group_basic_lands(cards: List[CardState]) -> list:
     result.extend(non_basics)
 
     return result
+
+
+def generate_bot_hand(game_state: GameState, force_all_oracle: bool = False) -> str:
+    """Generate a text snippet of the bot's (LLM, player index 1) hand cards."""
+    if len(game_state.players) < 2:
+        return "(No game in progress)"
+
+    llm_index = 1
+    llm_player = game_state.players[llm_index]
+    hand_cards = _get_zone_cards(game_state, llm_index, "hand")
+
+    lines = [f"{llm_player.name}'s Hand ({len(hand_cards)} cards):"]
+    if hand_cards:
+        for card in hand_cards:
+            show = force_all_oracle or card.show_oracle_text
+            orig = card.show_oracle_text
+            card.show_oracle_text = show
+            lines.append(f"  - {_format_card_full(card)}")
+            card.show_oracle_text = orig
+    else:
+        lines.append("  (empty)")
+
+    return "\n".join(lines)

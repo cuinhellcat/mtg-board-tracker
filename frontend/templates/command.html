@@ -57,6 +57,9 @@
                     <span id="recent-actions-count">1</span>
                     <button class="btn btn-xs" id="recent-actions-plus">+</button>
                 </label>
+                <label class="snapshot-control-label">
+                    <input type="checkbox" id="force-all-oracle"> Alle Oracle-Texte anzeigen
+                </label>
             </div>
             <textarea id="snapshot-text" class="snapshot-textarea monospace" readonly rows="10" placeholder="Waiting for state..."></textarea>
         </div>
@@ -88,10 +91,15 @@
 
     <!-- 8. Button Bar -->
     <footer class="cmd-button-bar">
-        <button class="btn" id="copy-snapshot" title="Copy boardstate snapshot to clipboard">Copy Boardstate</button>
-        <button class="btn" id="export-btn" title="Export game data">Export</button>
-        <button class="btn" id="undo-btn" title="Undo last action">Undo</button>
-        <button class="btn btn-danger" id="new-game-btn" title="Start a new game">New Game</button>
+        <div class="cmd-button-row-primary">
+            <button class="btn btn-copy-main" id="copy-snapshot" title="Copy boardstate snapshot to clipboard">Copy Boardstate</button>
+        </div>
+        <div class="cmd-button-row-secondary">
+            <button class="btn btn-small btn-blink" id="copy-bot-hand" title="Copy bot's hand cards for mulligan decisions">Copy Bot's Hand (Mulligan)</button>
+            <button class="btn" id="export-btn" title="Export game data">Export</button>
+            <button class="btn" id="undo-btn" title="Undo last action">Undo</button>
+            <button class="btn btn-danger" id="new-game-btn" title="Start a new game">New Game</button>
+        </div>
     </footer>
 
     <!-- Copy feedback toast -->

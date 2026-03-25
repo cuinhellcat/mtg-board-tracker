@@ -44,15 +44,13 @@ window.MTGSocket = (function () {
             try {
                 const data = JSON.parse(event.data);
                 const type = data.type;
-                // Server shutting down — close window, stop reconnecting
+                // Server shutting down — stop reconnecting
                 if (type === 'server_shutdown') {
                     serverShutdown = true;
                     if (reconnectInterval) {
                         clearInterval(reconnectInterval);
                         reconnectInterval = null;
                     }
-                    // Redirect to landing page (server is gone, so it'll show a blank/error)
-                    window.location.href = '/';
                     return;
                 }
                 if (handlers[type]) {

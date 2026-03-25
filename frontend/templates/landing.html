@@ -259,14 +259,8 @@
     </div>
 
     <script>
-        // Monitor layout (hardcoded)
-        // Monitor 1: primary, 1920x1080 at (0,0) — Board
-        // Monitor 2: portrait, 1080x1920 at (1920,148) — Command Center
         function resumeGame(e) {
             e.preventDefault();
-            // Open Command Center in a new window (one popup per click is allowed)
-            window.open('/command', 'mtg-command');
-            // Navigate current tab to board
             window.location.href = '/board';
         }
 

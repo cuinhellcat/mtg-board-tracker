@@ -4,6 +4,12 @@
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Signal that Command Center is open
+    localStorage.setItem('command-center-open', Date.now().toString());
+    window.addEventListener('beforeunload', () => {
+        localStorage.removeItem('command-center-open');
+    });
+
     // ---- State ----
     let currentState = null;
     let chatMessages = [];
@@ -55,9 +61,19 @@ document.addEventListener('DOMContentLoaded', () => {
         snapshotTextEl.value = text;
     });
 
+    const forceAllOracleEl = document.getElementById('force-all-oracle');
+
     function requestSnapshot() {
-        MTGSocket.send({ action: 'get_snapshot', recent_actions_count: recentActionsCount });
+        MTGSocket.send({
+            action: 'get_snapshot',
+            recent_actions_count: recentActionsCount,
+            force_all_oracle: forceAllOracleEl.checked
+        });
     }
+
+    forceAllOracleEl.addEventListener('change', () => {
+        requestSnapshot();
+    });
 
     // ---- Recent Actions Counter ----
     const recentCountEl = document.getElementById('recent-actions-count');
@@ -299,6 +315,37 @@ document.addEventListener('DOMContentLoaded', () => {
             copyToastEl.classList.remove('visible');
         }, 1500);
     }
+
+    // ================================================================
+    // Copy Bot's Hand
+    // ================================================================
+
+    let pendingBotHandCopy = false;
+
+    MTGSocket.on('bot_hand', (data) => {
+        if (!pendingBotHandCopy) return;
+        pendingBotHandCopy = false;
+        const text = data.text || '';
+        navigator.clipboard.writeText(text).then(() => {
+            showCopyToast();
+        }).catch(() => {
+            // Fallback
+            snapshotTextEl.value = text;
+            snapshotTextEl.select();
+            document.execCommand('copy');
+            showCopyToast();
+        });
+    });
+
+    const copyBotHandBtn = document.getElementById('copy-bot-hand');
+    copyBotHandBtn.addEventListener('click', () => {
+        pendingBotHandCopy = true;
+        copyBotHandBtn.classList.remove('btn-blink');
+        MTGSocket.send({
+            action: 'get_bot_hand',
+            force_all_oracle: forceAllOracleEl.checked
+        });
+    });
 
     // ================================================================
     // Export

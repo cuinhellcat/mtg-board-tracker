@@ -991,6 +991,12 @@
             transformItem.style.display = hasDfc ? 'block' : 'none';
         }
 
+        // Library (bottom): only for hand cards
+        var bottomItem = menu.querySelector('[data-zone="library_bottom"]');
+        if (bottomItem) {
+            bottomItem.style.display = (card.zone === 'hand') ? 'block' : 'none';
+        }
+
         // Related tokens: dynamically populate
         var tokenContainer = document.getElementById('related-tokens-container');
         tokenContainer.innerHTML = '';
@@ -2211,6 +2217,26 @@
        INITIALIZATION
        ================================================================== */
 
+    function showCommandCenterDialog() {
+        var overlay = document.getElementById('cc-dialog-overlay');
+        overlay.style.display = 'flex';
+
+        document.getElementById('cc-yes').addEventListener('click', function () {
+            overlay.style.display = 'none';
+            window.open('/command', 'mtg-command');
+        });
+
+        document.getElementById('cc-no').addEventListener('click', function () {
+            overlay.style.display = 'none';
+            var hintOverlay = document.getElementById('cc-hint-overlay');
+            hintOverlay.style.display = 'flex';
+
+            document.getElementById('cc-hint-ok').addEventListener('click', function () {
+                hintOverlay.style.display = 'none';
+            });
+        });
+    }
+
     function init() {
         initPreviewRefs();
         createConnectionStatus();
@@ -2224,6 +2250,11 @@
         setupLibraryInteractions();
         setupZoneViewers();
         bindEvents();
+
+        // Offer to open Command Center (only if not already open)
+        if (!localStorage.getItem('command-center-open')) {
+            showCommandCenterDialog();
+        }
 
         // Connect WebSocket
         if (window.MTGSocket) {
