@@ -1086,6 +1086,7 @@ class GameEngine:
         self.state.turn = 1
         self.state.phase = "untap"
         self.state.active_player_index = first_player_index
+        self.state.first_player_index = first_player_index
         self.state.game_started = True
 
         self._log_action("start_game", "Game started!")

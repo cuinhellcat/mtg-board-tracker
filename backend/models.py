@@ -77,6 +77,7 @@ class GameState(BaseModel):
     turn: int = 0
     phase: str = "untap"
     active_player_index: int = 0
+    first_player_index: int = 0
     action_log: List[ActionEntry] = Field(default_factory=list)
     game_started: bool = False
 

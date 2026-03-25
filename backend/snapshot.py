@@ -68,11 +68,24 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     else:
         active_label = f"{active_name} (Opponent)"
 
+    # Calculate whose Nth turn this is (tournament-style)
+    # Turn 1 belongs to first_player, Turn 2 to the other, Turn 3 to first again, etc.
+    active_idx = game_state.active_player_index
+    first_idx = game_state.first_player_index
+    if active_idx == first_idx:
+        player_turn_num = (game_state.turn + 1) // 2
+    else:
+        player_turn_num = game_state.turn // 2
+
+    ordinals = {1: "1st", 2: "2nd", 3: "3rd"}
+    ordinal = ordinals.get(player_turn_num, f"{player_turn_num}th")
+    turn_detail = f"Turn {game_state.turn} ({active_name}'s {ordinal})"
+
     phase_display = PHASE_DISPLAY_NAMES.get(game_state.phase, game_state.phase)
 
     lines = []
     lines.append("=== MTG DUEL COMMANDER -- BOARD STATE ===")
-    lines.append(f"Turn: {game_state.turn} | Phase: {phase_display} | Active Player: {active_label}")
+    lines.append(f"{turn_detail} | Phase: {phase_display} | Active Player: {active_label}")
     lines.append("")
 
     # --- YOUR STATUS (LLM) ---
