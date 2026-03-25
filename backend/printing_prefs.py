@@ -12,24 +12,34 @@ BASE_DIR = Path(__file__).parent.parent
 CACHE_DIR = BASE_DIR / "cache"
 PREFS_PATH = CACHE_DIR / "printing_preferences.json"
 
+_prefs_cache: Optional[Dict[str, Dict[str, Any]]] = None
+
 
 def load_preferences() -> Dict[str, Dict[str, Any]]:
-    """Load all printing preferences. Returns {card_name_lower: {scryfall_id, image_uri, set_name}}."""
+    """Load all printing preferences. Uses in-memory cache after first load."""
+    global _prefs_cache
+    if _prefs_cache is not None:
+        return _prefs_cache
     if not PREFS_PATH.exists():
-        return {}
+        _prefs_cache = {}
+        return _prefs_cache
     try:
-        return json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+        _prefs_cache = json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+        return _prefs_cache
     except (json.JSONDecodeError, Exception):
-        return {}
+        _prefs_cache = {}
+        return _prefs_cache
 
 
 def save_preferences(prefs: Dict[str, Dict[str, Any]]) -> None:
-    """Write all printing preferences to disk."""
+    """Write all printing preferences to disk and update in-memory cache."""
+    global _prefs_cache
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     PREFS_PATH.write_text(
         json.dumps(prefs, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    _prefs_cache = prefs
 
 
 def get_preference(card_name: str) -> Optional[Dict[str, Any]]:

@@ -71,7 +71,7 @@
      * @param {string} title - Modal title text
      * @param {function(Object)} onSelect - Callback with {name, type_line} or {name} for free text
      */
-    function openCardPicker(title, onSelect) {
+    function openCardPicker(title, onSelect, options) {
         _pickerCallback = onSelect;
         _pickerActiveIndex = -1;
         _pickerResults = [];
@@ -80,6 +80,17 @@
         var input = document.getElementById('card-picker-input');
         var results = document.getElementById('card-picker-results');
         document.getElementById('card-picker-title').textContent = title;
+
+        // Token toggle visibility
+        var tokenToggle = document.getElementById('card-picker-token-toggle');
+        var tokenCb = document.getElementById('card-picker-token-cb');
+        if (options && options.showTokenToggle) {
+            tokenToggle.style.display = '';
+            tokenCb.checked = false;
+        } else {
+            tokenToggle.style.display = 'none';
+            tokenCb.checked = false;
+        }
 
         input.value = '';
         results.innerHTML = '';
@@ -162,13 +173,27 @@
                 return;
             }
             _pickerDebounce = setTimeout(function () {
-                fetch('/api/cards/search?q=' + encodeURIComponent(query) + '&limit=15')
+                var tokenCb = document.getElementById('card-picker-token-cb');
+                var isToken = tokenCb && tokenCb.checked;
+                var url = isToken
+                    ? '/api/cards/search-tokens?q=' + encodeURIComponent(query) + '&limit=15'
+                    : '/api/cards/search?q=' + encodeURIComponent(query) + '&limit=15';
+                fetch(url)
                     .then(function (r) { return r.json(); })
                     .then(function (data) {
                         _pickerRenderResults(data.results || []);
                     });
             }, 150);
         });
+
+        // Re-search when token checkbox is toggled
+        var tokenCbEl = document.getElementById('card-picker-token-cb');
+        if (tokenCbEl) {
+            tokenCbEl.addEventListener('change', function () {
+                var ev = new Event('input');
+                input.dispatchEvent(ev);
+            });
+        }
 
         input.addEventListener('keydown', function (e) {
             var count = _pickerResults.length;
@@ -262,6 +287,8 @@
                 cards.push(c);
             }
         }
+        // Sort by zone_moved_at so the most recently moved card is last (top)
+        cards.sort(function (a, b) { return (a.zone_moved_at || 0) - (b.zone_moved_at || 0); });
         return cards;
     }
 
@@ -364,7 +391,7 @@
         if (displayPower !== null && displayToughness !== null) {
             ptHtml = '<div class="card-pt">' + escapeHtml(displayPower) + '/' + escapeHtml(displayToughness) + '</div>';
         } else if (displayLoyalty !== null) {
-            ptHtml = '<div class="card-pt">Loy: ' + escapeHtml(String(displayLoyalty)) + '</div>';
+            ptHtml = '<div class="card-loyalty" title="Left-click: +1 / Right-click: -1">Loy: ' + escapeHtml(String(displayLoyalty)) + '</div>';
         }
 
         // Custom P/T badge (manual override, e.g. animated lands)
@@ -473,6 +500,24 @@
                     MTGSocket.send({ action: 'remove_counter', card_id: card.id, counter_type: ct, amount: 1 });
                 });
             });
+        }
+
+        // Loyalty badge click handlers: left +1, right -1
+        if (displayLoyalty !== null) {
+            var loyaltyBadge = el.querySelector('.card-loyalty');
+            if (loyaltyBadge) {
+                loyaltyBadge.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var cur = parseInt(card.loyalty, 10) || 0;
+                    MTGSocket.send({ action: 'set_loyalty', card_id: card.id, loyalty: cur + 1 });
+                });
+                loyaltyBadge.addEventListener('contextmenu', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    var cur = parseInt(card.loyalty, 10) || 0;
+                    MTGSocket.send({ action: 'set_loyalty', card_id: card.id, loyalty: cur - 1 });
+                });
+            }
         }
 
         // Click: tap/untap on battlefield
@@ -991,6 +1036,12 @@
             transformItem.style.display = hasDfc ? 'block' : 'none';
         }
 
+        // Move-to group: show for graveyard and normal exile cards
+        var moveToGroup = document.getElementById('ctx-move-to-group');
+        if (moveToGroup) {
+            moveToGroup.style.display = (card.zone === 'graveyard' || card.zone === 'exile') ? '' : 'none';
+        }
+
         // Library (bottom): only for hand cards
         var bottomItem = menu.querySelector('[data-zone="library_bottom"]');
         if (bottomItem) {
@@ -1192,6 +1243,19 @@
                 MTGSocket.send({ action: 'toggle_oracle_text', card_id: cardId });
                 break;
 
+            case 'copy_oracle_text':
+                var ctxCard = gameState.cards[cardId];
+                if (ctxCard) {
+                    var text = ctxCard.name;
+                    if (ctxCard.mana_cost) text += ' ' + ctxCard.mana_cost;
+                    text += '\n' + ctxCard.type_line;
+                    if (ctxCard.oracle_text) text += '\n\n' + ctxCard.oracle_text;
+                    if (ctxCard.power !== null && ctxCard.toughness !== null) text += '\n\n' + ctxCard.power + '/' + ctxCard.toughness;
+                    if (ctxCard.loyalty !== null) text += '\n\nLoyalty: ' + ctxCard.loyalty;
+                    navigator.clipboard.writeText(text);
+                }
+                break;
+
             case 'delete_card':
                 MTGSocket.send({ action: 'delete_card', card_id: cardId });
                 break;
@@ -1213,36 +1277,37 @@
     }
 
     /** Handle create token — opens card picker, then prompts for details. */
-    function handleCreateToken() {
+    function handleCreateToken(playerIndex) {
         // Determine which player to create it for
-        var pi = 1; // Default to human player
-        if (contextCardId && currentState && currentState.cards[contextCardId]) {
+        var pi = playerIndex !== undefined ? playerIndex : 1;
+        if (pi === undefined && contextCardId && currentState && currentState.cards[contextCardId]) {
             pi = currentState.cards[contextCardId].controller_index;
         }
 
-        openCardPicker('Token erstellen — Name suchen', function (card) {
-            var name = card.name;
-            var pt = prompt('Power/Toughness (e.g. 2/2):');
-            if (!pt) return;
+        var name = prompt('Token Name:');
+        if (!name) return;
+        var pt = prompt('Power/Toughness (e.g. 2/2, leer für Nicht-Kreatur):');
+        var power = null;
+        var toughness = null;
+        var defaultType = 'Token — ' + name.trim();
+        if (pt && pt.trim()) {
             var parts = pt.split('/');
-            var power = (parts[0] || '0').trim();
-            var toughness = (parts[1] || '0').trim();
-            var defaultType = 'Token Creature — ' + name.trim();
-            if (card.type_line) defaultType = card.type_line;
-            var typeLine = prompt('Type line:', defaultType);
-            if (!typeLine) typeLine = 'Token Creature';
-            var defaultAbilities = card.oracle_text || '';
-            var abilities = prompt('Abilities (optional):', defaultAbilities) || '';
+            power = (parts[0] || '0').trim();
+            toughness = (parts[1] || '0').trim();
+            defaultType = 'Token Creature — ' + name.trim();
+        }
+        var typeLine = prompt('Type line:', defaultType);
+        if (!typeLine) typeLine = defaultType;
+        var abilities = prompt('Abilities (optional):') || '';
 
-            MTGSocket.send({
-                action: 'create_token',
-                player_index: pi,
-                name: name.trim(),
-                power: power,
-                toughness: toughness,
-                type_line: typeLine.trim(),
-                abilities: abilities.trim()
-            });
+        MTGSocket.send({
+            action: 'create_token',
+            player_index: pi,
+            name: name.trim(),
+            power: power,
+            toughness: toughness,
+            type_line: typeLine.trim(),
+            abilities: abilities.trim()
         });
     }
 
@@ -1274,12 +1339,93 @@
                 MTGSocket.send({ action: 'search_library', player_index: pi });
                 break;
 
+            case 'copy_library':
+                copyLibraryToClipboard(pi);
+                break;
+
+            case 'mill':
+                openMillDialog(pi);
+                break;
+
             case 'mulligan':
                 MTGSocket.send({ action: 'mulligan', player_index: pi });
                 break;
         }
 
         hideAllContextMenus();
+    }
+
+    function openMillDialog(playerIndex) {
+        var dialog = document.getElementById('mill-dialog');
+        var input = document.getElementById('mill-count');
+        input.value = '1';
+        dialog.style.display = '';
+        input.focus();
+        input.select();
+
+        var minusBtn = document.getElementById('mill-minus');
+        var plusBtn = document.getElementById('mill-plus');
+        var confirmBtn = document.getElementById('mill-confirm');
+        var cancelBtn = document.getElementById('mill-cancel');
+
+        function cleanup() {
+            dialog.style.display = 'none';
+            minusBtn.replaceWith(minusBtn.cloneNode(true));
+            plusBtn.replaceWith(plusBtn.cloneNode(true));
+            confirmBtn.replaceWith(confirmBtn.cloneNode(true));
+            cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+            input.removeEventListener('keydown', onKeydown);
+        }
+
+        function doMill() {
+            var count = parseInt(input.value, 10);
+            if (count > 0) {
+                MTGSocket.send({ action: 'mill', player_index: playerIndex, count: count });
+            }
+            cleanup();
+        }
+
+        function onKeydown(e) {
+            if (e.key === 'Enter') { e.preventDefault(); doMill(); }
+            else if (e.key === 'Escape') { cleanup(); }
+        }
+
+        input.addEventListener('keydown', onKeydown);
+
+        document.getElementById('mill-minus').addEventListener('click', function () {
+            var v = parseInt(input.value, 10) || 1;
+            if (v > 1) input.value = v - 1;
+        });
+        document.getElementById('mill-plus').addEventListener('click', function () {
+            var v = parseInt(input.value, 10) || 0;
+            input.value = v + 1;
+        });
+        document.getElementById('mill-confirm').addEventListener('click', doMill);
+        document.getElementById('mill-cancel').addEventListener('click', cleanup);
+    }
+
+    function copyLibraryToClipboard(playerIndex) {
+        if (!currentState) return;
+        var libCards = getCardsInZone(currentState, 'library', playerIndex);
+        if (libCards.length === 0) {
+            showErrorToast('Library is empty');
+            return;
+        }
+        var playerName = currentState.players[playerIndex]
+            ? currentState.players[playerIndex].name : 'Player ' + playerIndex;
+        var lines = [playerName + "'s Library (" + libCards.length + ' cards):'];
+        libCards.forEach(function (card) {
+            var parts = [card.name];
+            if (card.mana_cost) parts.push(card.mana_cost);
+            if (card.type_line) parts.push('[' + card.type_line + ']');
+            lines.push('  - ' + parts.join(' '));
+        });
+        var text = lines.join('\n');
+        navigator.clipboard.writeText(text).then(function () {
+            showErrorToast('Library copied!');
+        }).catch(function () {
+            showErrorToast('Copy failed');
+        });
     }
 
     /* ==================================================================
@@ -1301,31 +1447,7 @@
 
         switch (actionType) {
             case 'bf_create_token':
-                contextCardId = null;
-                var origPi = pi;
-                openCardPicker('Token erstellen — Name suchen', function (card) {
-                    var name = card.name;
-                    var pt = prompt('Power/Toughness (e.g. 2/2):');
-                    if (!pt) return;
-                    var parts = pt.split('/');
-                    var power = (parts[0] || '0').trim();
-                    var toughness = (parts[1] || '0').trim();
-                    var defaultType = 'Token Creature — ' + name.trim();
-                    if (card.type_line) defaultType = card.type_line;
-                    var typeLine = prompt('Type line:', defaultType);
-                    if (!typeLine) typeLine = 'Token Creature';
-                    var defaultAbilities = card.oracle_text || '';
-                    var abilities = prompt('Abilities (optional):', defaultAbilities) || '';
-                    MTGSocket.send({
-                        action: 'create_token',
-                        player_index: origPi,
-                        name: name.trim(),
-                        power: power,
-                        toughness: toughness,
-                        type_line: typeLine.trim(),
-                        abilities: abilities.trim()
-                    });
-                });
+                handleCreateToken(pi);
                 break;
 
             case 'bf_add_card_battlefield':
@@ -1339,7 +1461,7 @@
                         name: card.name.trim(),
                         zone: addZone
                     });
-                });
+                }, { showTokenToggle: true });
                 break;
         }
     }
@@ -1408,6 +1530,54 @@
     var frontOverlay = null;
     var backOverlay = null;
 
+    // Preview zoom state
+    var ZOOM_LEVELS = [1, 1.3, 1.6, 2.0];
+    var BASE_WIDTH = 265;
+    var BASE_HEIGHT = 370;
+    var previewZoomIndex = 0;
+    var previewZoomCard = null;  // scryfall_id of currently previewed card
+    var previewCardRef = null;   // full card object for current preview
+    var cardZoomPrefs = JSON.parse(localStorage.getItem('cardZoomPrefs') || '{}');
+
+    function saveCardZoomPref(scryfallId, zoomIdx) {
+        if (!scryfallId) return;
+        if (zoomIdx === 0) {
+            delete cardZoomPrefs[scryfallId];
+        } else {
+            cardZoomPrefs[scryfallId] = zoomIdx;
+        }
+        localStorage.setItem('cardZoomPrefs', JSON.stringify(cardZoomPrefs));
+    }
+
+    function applyPreviewZoom() {
+        if (!previewEl || previewEl.style.display === 'none') return;
+        var zoom = ZOOM_LEVELS[previewZoomIndex];
+        var w = Math.round(BASE_WIDTH * zoom);
+        var h = Math.round(BASE_HEIGHT * zoom);
+        var imgs = previewEl.querySelectorAll('.card-preview-face img');
+        for (var i = 0; i < imgs.length; i++) {
+            imgs[i].style.width = w + 'px';
+            imgs[i].style.height = h + 'px';
+        }
+        var fallback = previewEl.querySelector('.card-preview-fallback');
+        if (fallback) {
+            fallback.style.width = w + 'px';
+            fallback.style.minHeight = h + 'px';
+        }
+        // Switch to large image when zoomed in
+        if (zoom > 1 && previewCardRef) {
+            var largeUri = previewCardRef.large_image_uri;
+            if (largeUri && previewImg && previewImg.src.indexOf('_large') === -1) {
+                previewImg.src = largeUri;
+            }
+            var bf = previewCardRef.back_face || {};
+            var largeBf = bf.large_image_uri;
+            if (largeBf && previewBackImg && previewBackImg.src && previewBackImg.src.indexOf('_large') === -1) {
+                previewBackImg.src = largeBf;
+            }
+        }
+    }
+
     function initPreviewRefs() {
         previewEl = document.getElementById('card-preview');
         previewImg = document.getElementById('card-preview-img');
@@ -1420,6 +1590,9 @@
 
     function showCardPreview(card, e) {
         if (!previewEl) initPreviewRefs();
+        previewCardRef = card;
+        previewZoomCard = card.scryfall_id || card.id;
+        previewZoomIndex = cardZoomPrefs[previewZoomCard] || 0;
 
         // Resolve display image — use back face image when transformed
         var bf = card.back_face || {};
@@ -1486,6 +1659,7 @@
         statusEl.innerHTML = statusHtml;
 
         previewEl.style.display = 'block';
+        applyPreviewZoom();
         moveCardPreview(e);
     }
 
@@ -1515,6 +1689,8 @@
     function hideCardPreview() {
         if (!previewEl) initPreviewRefs();
         previewEl.style.display = 'none';
+        previewCardRef = null;
+        previewZoomCard = null;
     }
 
     /* ==================================================================
@@ -1769,7 +1945,11 @@
         var printingModal = document.getElementById('printing-modal');
         printingModal.style.display = 'flex';
 
-        fetch('/api/cards/printings?name=' + encodeURIComponent(card.name))
+        var url = '/api/cards/printings?name=' + encodeURIComponent(card.name);
+        if (card.is_token) {
+            url += '&is_token=1';
+        }
+        fetch(url)
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 document.getElementById('printing-loading').style.display = 'none';
@@ -2184,6 +2364,25 @@
             if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 MTGSocket.send({ action: 'undo' });
+            }
+
+            // Numpad +/-: zoom card preview
+            if (previewEl && previewEl.style.display !== 'none' && previewZoomCard) {
+                if (e.key === '+' || e.key === 'Add') {
+                    e.preventDefault();
+                    if (previewZoomIndex < ZOOM_LEVELS.length - 1) {
+                        previewZoomIndex++;
+                        saveCardZoomPref(previewZoomCard, previewZoomIndex);
+                        applyPreviewZoom();
+                    }
+                } else if (e.key === '-' || e.key === 'Subtract') {
+                    e.preventDefault();
+                    if (previewZoomIndex > 0) {
+                        previewZoomIndex--;
+                        saveCardZoomPref(previewZoomCard, previewZoomIndex);
+                        applyPreviewZoom();
+                    }
+                }
             }
         });
     }

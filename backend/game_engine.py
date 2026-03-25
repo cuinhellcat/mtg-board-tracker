@@ -270,7 +270,9 @@ class GameEngine:
             "set_commander_tax": self._handle_set_commander_tax,
             "add_card": self._handle_add_card,
             "set_custom_pt": self._handle_set_custom_pt,
+            "set_loyalty": self._handle_set_loyalty,
             "transform_card": self._handle_transform_card,
+            "mill": self._handle_mill,
         }
 
         handler = handler_map.get(action_type)
@@ -295,6 +297,12 @@ class GameEngine:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _move_to_zone(self, card: CardState, zone: str):
+        """Set a card's zone and update the zone_moved_at counter for ordering."""
+        self.state.zone_move_counter += 1
+        card.zone = zone
+        card.zone_moved_at = self.state.zone_move_counter
 
     def _get_card(self, card_id: str) -> CardState:
         card = self.state.cards.get(card_id)
@@ -347,7 +355,7 @@ class GameEngine:
             for linked_id in list(card.linked_exile_cards):
                 linked_card = self.state.cards.get(linked_id)
                 if linked_card:
-                    linked_card.zone = "exile"
+                    self._move_to_zone(linked_card, "exile")
                     linked_card.linked_to = None
             card.linked_exile_cards = []
 
@@ -373,7 +381,7 @@ class GameEngine:
                 parent.linked_exile_cards.remove(card_id)
             card.linked_to = None
 
-        card.zone = to_zone
+        self._move_to_zone(card, to_zone)
         if to_player_index is not None:
             card.controller_index = to_player_index
 
@@ -462,12 +470,7 @@ class GameEngine:
         next_idx = current_idx + 1
 
         if next_idx >= len(PHASE_ORDER):
-            # End of turn: go to untap, switch active player, increment turn
-            self.state.turn += 1
-            self.state.active_player_index = 1 - self.state.active_player_index
-            self.state.phase = "untap"
-            active_name = self.state.players[self.state.active_player_index].name
-            self._log_action("next_phase", f"New turn {self.state.turn} - {active_name}'s turn")
+            self._begin_new_turn()
         else:
             self.state.phase = PHASE_ORDER[next_idx]
             self._log_action("next_phase", f"Phase: {PHASE_DISPLAY_NAMES[self.state.phase]}")
@@ -475,12 +478,43 @@ class GameEngine:
         return {"ok": True}
 
     def _handle_pass_turn(self, action: dict) -> dict:
+        self._begin_new_turn()
+        return {"ok": True}
+
+    def _begin_new_turn(self):
+        """Switch active player, increment turn, and auto-resolve untap/upkeep/draw."""
         self.state.turn += 1
         self.state.active_player_index = 1 - self.state.active_player_index
+        active_idx = self.state.active_player_index
+        active_name = self.state.players[active_idx].name
+
+        # --- Untap step: untap all permanents of the active player ---
         self.state.phase = "untap"
-        active_name = self.state.players[self.state.active_player_index].name
-        self._log_action("pass_turn", f"Passed turn. Turn {self.state.turn} - {active_name}'s turn")
-        return {"ok": True}
+        untap_count = 0
+        for card in self.state.cards.values():
+            if card.controller_index == active_idx and card.zone == "battlefield" and card.tapped:
+                card.tapped = False
+                untap_count += 1
+
+        self._log_action("new_turn", f"Turn {self.state.turn} — {active_name}'s turn")
+        if untap_count > 0:
+            self._log_action("untap_all", f"Untapped {untap_count} permanents for {active_name}")
+
+        # --- Upkeep step ---
+        self.state.phase = "upkeep"
+
+        # --- Draw step: draw one card ---
+        self.state.phase = "draw"
+        library = self._library_cards(active_idx)
+        if library:
+            card = library[0]
+            self._move_to_zone(card, "hand")
+            self._log_action("draw_card", f"{active_name} drew a card: {card.name}")
+        else:
+            self._log_action("draw_card", f"{active_name} tried to draw but library is empty!")
+
+        # Leave phase on draw — player can advance to main1 when ready
+
 
     def _handle_draw_card(self, action: dict) -> dict:
         player_index = action["player_index"]
@@ -496,12 +530,33 @@ class GameEngine:
             if not library:
                 break
             card = library.pop(0)
-            card.zone = "hand"
+            self._move_to_zone(card, "hand")
             drawn.append(card.name)
 
         drawn_str = ", ".join(drawn) if drawn else "nothing"
         self._log_action("draw_card", f"{player.name} drew {count} card(s): {drawn_str}")
         return {"ok": True, "drawn": drawn}
+
+    def _handle_mill(self, action: dict) -> dict:
+        player_index = action["player_index"]
+        count = action.get("count", 1)
+        player = self._get_player(player_index)
+
+        library = self._library_cards(player_index)
+        if len(library) < count:
+            count = len(library)
+
+        milled = []
+        for i in range(count):
+            if not library:
+                break
+            card = library.pop(0)
+            self._move_to_zone(card, "graveyard")
+            milled.append(card.name)
+
+        milled_str = ", ".join(milled) if milled else "nothing"
+        self._log_action("mill", f"{player.name} milled {count}: {milled_str}")
+        return {"ok": True, "milled": milled}
 
     def _handle_shuffle_library(self, action: dict) -> dict:
         player_index = action["player_index"]
@@ -576,6 +631,7 @@ class GameEngine:
             color_identity=card_data.get("color_identity", []),
             cmc=card_data.get("cmc", 0),
             image_uri=card_data.get("image_uri"),
+            large_image_uri=card_data.get("large_image_uri"),
             zone=zone,
             owner_index=player_index,
             controller_index=player_index,
@@ -601,6 +657,15 @@ class GameEngine:
             self._log_action("set_custom_pt", f"Set {card.name} P/T badge to {power}/{toughness}")
         else:
             self._log_action("set_custom_pt", f"Removed P/T badge from {card.name}")
+        return {"ok": True}
+
+    def _handle_set_loyalty(self, action: dict) -> dict:
+        """Update a planeswalker's loyalty value."""
+        card = self._get_card(action["card_id"])
+        new_loyalty = action["loyalty"]
+        old_loyalty = card.loyalty
+        card.loyalty = str(new_loyalty)
+        self._log_action("set_loyalty", f"{card.name} loyalty {old_loyalty} → {new_loyalty}")
         return {"ok": True}
 
     def _handle_transform_card(self, action: dict) -> dict:
@@ -644,7 +709,7 @@ class GameEngine:
         for linked_id in list(card.linked_exile_cards):
             linked = self.state.cards.get(linked_id)
             if linked:
-                linked.zone = "exile"
+                self._move_to_zone(linked, "exile")
                 linked.linked_to = None
 
         del self.state.cards[card_id]
@@ -701,7 +766,7 @@ class GameEngine:
         card = self._get_card(card_id)
         parent = self._get_card(parent_card_id)
 
-        card.zone = "exile_linked"
+        self._move_to_zone(card, "exile_linked")
         card.linked_to = parent_card_id
         if card_id not in parent.linked_exile_cards:
             parent.linked_exile_cards.append(card_id)
@@ -719,7 +784,7 @@ class GameEngine:
                 parent.linked_exile_cards.remove(card_id)
             card.linked_to = None
 
-        card.zone = "exile"
+        self._move_to_zone(card, "exile")
         self._log_action("unlink_exile", f"Unlinked {card.name} from exile")
         return {"ok": True}
 
@@ -785,6 +850,7 @@ class GameEngine:
             toughness=token_data.get("toughness"),
             colors=token_data.get("colors", []),
             image_uri=token_data.get("image_uri"),
+            large_image_uri=token_data.get("large_image_uri"),
             zone="battlefield",
             owner_index=player_index,
             controller_index=player_index,
@@ -926,7 +992,7 @@ class GameEngine:
             self.state.cards = new_cards
             return {"ok": True}
 
-        card.zone = to_zone
+        self._move_to_zone(card, to_zone)
         card.controller_index = player_index
 
         self._log_action("search_library", f"{player.name} searched library for {card.name} -> {to_zone}")
@@ -955,7 +1021,7 @@ class GameEngine:
         # Move all hand cards back to library
         hand = self._hand_cards(player_index)
         for card in hand:
-            card.zone = "library"
+            self._move_to_zone(card, "library")
 
         # Shuffle library
         library = self._library_cards(player_index)
@@ -976,7 +1042,7 @@ class GameEngine:
         library = self._library_cards(player_index)
         draw_count = min(7, len(library))
         for i in range(draw_count):
-            library[i].zone = "hand"
+            self._move_to_zone(library[i], "hand")
 
         self._log_action("mulligan", f"{player.name} took a mulligan (drew 7 new cards)")
         return {"ok": True}
@@ -989,7 +1055,7 @@ class GameEngine:
             raise ValueError(f"Card {card.name} is not in hand")
 
         # Move to bottom of library: remove from current position, re-add at end
-        card.zone = "library"
+        self._move_to_zone(card, "library")
 
         # Ensure it's at the bottom by rebuilding order
         other_cards = {cid: c for cid, c in self.state.cards.items() if cid != card_id}
@@ -1050,6 +1116,7 @@ class GameEngine:
                         color_identity=scryfall_data.get("color_identity", []),
                         cmc=scryfall_data.get("cmc", 0),
                         image_uri=scryfall_data.get("image_uri"),
+                        large_image_uri=scryfall_data.get("large_image_uri"),
                         zone="command_zone" if is_commander else "library",
                         owner_index=player_idx,
                         controller_index=player_idx,
@@ -1081,7 +1148,7 @@ class GameEngine:
             library = self._library_cards(player_idx)
             draw_count = min(7, len(library))
             for i in range(draw_count):
-                library[i].zone = "hand"
+                self._move_to_zone(library[i], "hand")
 
         self.state.turn = 1
         self.state.phase = "untap"
@@ -1164,5 +1231,6 @@ class GameEngine:
         card = self._get_card(action["card_id"])
         card.scryfall_id = action.get("scryfall_id", card.scryfall_id)
         card.image_uri = action.get("image_uri", card.image_uri)
+        card.large_image_uri = action.get("large_image_uri", card.large_image_uri)
         self._log_action("set_card_printing", f"Changed printing of {card.name}")
         return {"ok": True}

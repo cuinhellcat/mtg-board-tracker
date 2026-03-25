@@ -18,10 +18,12 @@ from backend.scryfall import (
     download_deck_images,
     ensure_card_image,
     fetch_card_printings,
+    fetch_token_printings,
     find_non_crossover_printing,
     get_cache_status,
     is_crossover_set,
     search_cards,
+    search_tokens,
     update_cache,
 )
 from backend.decklist import parse_decklist
@@ -129,13 +131,23 @@ async def api_search_cards(q: str = "", limit: int = 10):
     return JSONResponse({"results": results})
 
 
+@app.get("/api/cards/search-tokens")
+async def api_search_tokens(q: str = "", limit: int = 15):
+    """Search local token cache for tokens by name (offline)."""
+    results = search_tokens(q, limit=limit)
+    return JSONResponse({"results": results})
+
+
 @app.get("/api/cards/printings")
-async def api_card_printings(name: str = ""):
-    """Fetch all printings of a card from Scryfall API."""
+async def api_card_printings(name: str = "", is_token: str = ""):
+    """Fetch all printings of a card (or token) from Scryfall API."""
     if not name.strip():
         return JSONResponse({"printings": []})
     try:
-        printings = await fetch_card_printings(name.strip())
+        if is_token == "1":
+            printings = await fetch_token_printings(name.strip())
+        else:
+            printings = await fetch_card_printings(name.strip())
         return JSONResponse({"printings": printings})
     except Exception as e:
         return JSONResponse({"printings": [], "error": str(e)})

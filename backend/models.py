@@ -22,7 +22,9 @@ class CardState(BaseModel):
     color_identity: List[str] = Field(default_factory=list)
     cmc: float = 0
     image_uri: Optional[str] = None
+    large_image_uri: Optional[str] = None
     zone: str  # "library", "hand", "battlefield", "graveyard", "exile", "exile_linked", "command_zone"
+    zone_moved_at: int = 0  # incremental counter for ordering within a zone
     owner_index: int
     controller_index: int
     tapped: bool = False
@@ -78,6 +80,7 @@ class GameState(BaseModel):
     phase: str = "untap"
     active_player_index: int = 0
     first_player_index: int = 0
+    zone_move_counter: int = 0
     action_log: List[ActionEntry] = Field(default_factory=list)
     game_started: bool = False
 

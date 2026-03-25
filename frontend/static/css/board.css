@@ -521,6 +521,28 @@ button {
     border-color: #cd853f;
 }
 
+/* Loyalty badge (planeswalkers, clickable) */
+.card-loyalty {
+    font-size: var(--card-font);
+    font-weight: 700;
+    color: #fff;
+    background: #3a3a6a;
+    border: 1px solid #5555a0;
+    border-radius: 3px;
+    padding: 0 3px;
+    text-align: right;
+    margin-top: auto;
+    cursor: pointer;
+    user-select: none;
+    width: fit-content;
+    margin-left: auto;
+}
+
+.card-loyalty:hover {
+    background: #4a4a8a;
+    border-color: #7777cc;
+}
+
 .custom-pt-power,
 .custom-pt-toughness {
     cursor: pointer;
@@ -539,6 +561,7 @@ button {
 .card.face-down .card-header,
 .card.face-down .card-type,
 .card.face-down .card-pt,
+.card.face-down .card-loyalty,
 .card.face-down .card-custom-pt,
 .card.face-down .card-counters,
 .card.face-down .linked-exile-list,
@@ -2161,9 +2184,6 @@ button {
 }
 
 .inventory-toggle {
-    position: absolute;
-    bottom: 2px;
-    left: 2px;
     font-size: 11px;
     color: #90b0b0;
     background: rgba(30, 50, 50, 0.7);
