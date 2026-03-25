@@ -350,6 +350,13 @@ class GameEngine:
             card.blocking = None
             card.tapped = False
 
+        # Clean state when moving to stack
+        if to_zone == "stack":
+            card.tapped = False
+            card.attacking = False
+            card.blocking = None
+            card.battlefield_group = None
+
         # If card had linked exile cards and is leaving battlefield, unlink them
         if from_zone == "battlefield" and to_zone != "battlefield":
             for linked_id in list(card.linked_exile_cards):

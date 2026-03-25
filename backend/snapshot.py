@@ -181,6 +181,16 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
             lines.append(f"  - {_format_card_brief(card)}{cast_note}")
         lines.append("")
 
+    # --- STACK (shared zone) ---
+    stack_cards = [c for c in game_state.cards.values() if c.zone == "stack"]
+    stack_cards.sort(key=lambda c: c.zone_moved_at, reverse=True)
+    if stack_cards:
+        lines.append("=== STACK ===")
+        for card in stack_cards:
+            owner = game_state.players[card.controller_index].name if card.controller_index < len(game_state.players) else "?"
+            lines.append(f"  - {_format_card_brief(card)} (cast by {owner})")
+        lines.append("")
+
     # --- RECENT ACTIONS ---
     if action_log and recent_actions_count > 0:
         recent = action_log[-recent_actions_count:]

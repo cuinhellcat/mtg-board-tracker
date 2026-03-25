@@ -288,7 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Copy Boardstate
     // ================================================================
 
-    document.getElementById('copy-snapshot').addEventListener('click', () => {
+    function copySnapshot() {
         let text = snapshotTextEl.value || '';
 
         // Append additional notes if any
@@ -301,12 +301,14 @@ document.addEventListener('DOMContentLoaded', () => {
             showCopyToast();
         }).catch((err) => {
             console.error('Failed to copy:', err);
-            // Fallback: select the text
             snapshotTextEl.select();
             document.execCommand('copy');
             showCopyToast();
         });
-    });
+    }
+
+    document.getElementById('copy-snapshot').addEventListener('click', copySnapshot);
+    document.getElementById('copy-snapshot-top').addEventListener('click', copySnapshot);
 
     function showCopyToast() {
         copyToastEl.classList.add('visible');

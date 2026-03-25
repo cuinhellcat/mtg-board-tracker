@@ -732,6 +732,9 @@
 
         // Phase tracker
         renderPhaseTracker(state.phase);
+
+        // Stack zone
+        renderStackArea(state);
     }
 
     /** Classify a battlefield card into creature / land / other.
@@ -979,6 +982,83 @@
     }
 
     /* ==================================================================
+       STACK ZONE
+       ================================================================== */
+
+    function renderStackArea(state) {
+        var container = document.getElementById('stack-cards');
+        if (!container) return;
+        container.innerHTML = '';
+
+        // Gather all stack cards, sorted by zone_moved_at (oldest first = bottom)
+        var stackCards = [];
+        var allCards = state.cards || {};
+        for (var id in allCards) {
+            if (allCards[id].zone === 'stack') stackCards.push(allCards[id]);
+        }
+        stackCards.sort(function (a, b) { return (a.zone_moved_at || 0) - (b.zone_moved_at || 0); });
+
+        var resolveBtn = document.getElementById('btn-resolve-stack');
+
+        if (stackCards.length === 0) {
+            resolveBtn.style.display = 'none';
+            return;
+        }
+        resolveBtn.style.display = '';
+
+        // Cards float above everything — position upward from the stack zone
+        var overlap = 40;
+
+        stackCards.forEach(function (card, i) {
+            var wrapper = document.createElement('div');
+            wrapper.className = 'stack-card-wrapper card';
+            wrapper.dataset.cardId = card.id;
+            wrapper.dataset.cardName = card.name;
+            wrapper.dataset.zone = 'stack';
+            wrapper.dataset.owner = card.owner_index;
+            wrapper.dataset.controller = card.controller_index;
+            wrapper.dataset.colors = (card.colors || []).join(',');
+            wrapper.setAttribute('draggable', 'true');
+
+            // Fan rotation + stack upward (negative top so cards go above the bar)
+            var angle = (i - (stackCards.length - 1) / 2) * 3;
+            var offsetY = -(i * overlap) - 340; // push cards above the middle-bar
+            wrapper.style.top = offsetY + 'px';
+            wrapper.style.left = '-80px'; // center relative to the small stack zone
+            wrapper.style.transform = 'rotate(' + angle + 'deg)';
+            wrapper.style.zIndex = 500 + i;
+
+            var imgSrc = card.scryfall_id ? '/cache/images/' + card.scryfall_id + '_large.jpg' : '';
+            var img = document.createElement('img');
+            img.className = 'stack-card-img';
+            img.src = imgSrc;
+            img.alt = card.name;
+            img.draggable = false;
+
+            var label = document.createElement('div');
+            label.className = 'stack-card-name';
+            label.textContent = card.name;
+
+            wrapper.appendChild(img);
+            wrapper.appendChild(label);
+            container.appendChild(wrapper);
+
+            DragDrop.makeCardDraggable(wrapper);
+
+            // Hover preview
+            wrapper.addEventListener('mouseenter', function (e) { showCardPreview(card, e); });
+            wrapper.addEventListener('mouseleave', hideCardPreview);
+
+            // Right-click context menu
+            wrapper.addEventListener('contextmenu', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                showCardContextMenu(e, card);
+            });
+        });
+    }
+
+    /* ==================================================================
        CONTEXT MENUS
        ================================================================== */
 
@@ -1036,10 +1116,17 @@
             transformItem.style.display = hasDfc ? 'block' : 'none';
         }
 
-        // Move-to group: show for graveyard and normal exile cards
+        // Move-to group: show for graveyard, normal exile, and stack cards
         var moveToGroup = document.getElementById('ctx-move-to-group');
         if (moveToGroup) {
-            moveToGroup.style.display = (card.zone === 'graveyard' || card.zone === 'exile') ? '' : 'none';
+            moveToGroup.style.display = (card.zone === 'graveyard' || card.zone === 'exile' || card.zone === 'stack') ? '' : 'none';
+        }
+
+        // Stack: show for hand, battlefield, command_zone cards
+        var stackItem = menu.querySelector('[data-zone="stack"]');
+        if (stackItem) {
+            var canStack = card.zone === 'hand' || card.zone === 'battlefield' || card.zone === 'command_zone';
+            stackItem.style.display = canStack ? 'block' : 'none';
         }
 
         // Library (bottom): only for hand cards
@@ -2304,6 +2391,34 @@
         document.getElementById('attach-card-cancel').addEventListener('click', function (e) {
             e.stopPropagation();
             cancelAttachMode();
+        });
+
+        // Stack resolve button
+        document.getElementById('btn-resolve-stack').addEventListener('click', function () {
+            if (!currentState) return;
+            var stackCards = [];
+            for (var id in currentState.cards) {
+                if (currentState.cards[id].zone === 'stack') stackCards.push(currentState.cards[id]);
+            }
+            if (stackCards.length === 0) return;
+            stackCards.sort(function (a, b) { return (a.zone_moved_at || 0) - (b.zone_moved_at || 0); });
+            var topCard = stackCards[stackCards.length - 1];
+
+            // Determine resolve destination
+            var typeLine = (topCard.type_line || '').toLowerCase();
+            var destZone;
+            if (typeLine.indexOf('instant') !== -1 || typeLine.indexOf('sorcery') !== -1) {
+                destZone = 'graveyard';
+            } else {
+                destZone = 'battlefield';
+            }
+
+            MTGSocket.send({
+                action: 'move_card',
+                card_id: topCard.id,
+                to_zone: destZone,
+                to_player_index: topCard.controller_index
+            });
         });
 
         // Scry confirm

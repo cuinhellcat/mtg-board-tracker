@@ -23,7 +23,7 @@ class CardState(BaseModel):
     cmc: float = 0
     image_uri: Optional[str] = None
     large_image_uri: Optional[str] = None
-    zone: str  # "library", "hand", "battlefield", "graveyard", "exile", "exile_linked", "command_zone"
+    zone: str  # "library", "hand", "battlefield", "graveyard", "exile", "exile_linked", "command_zone", "stack"
     zone_moved_at: int = 0  # incremental counter for ordering within a zone
     owner_index: int
     controller_index: int

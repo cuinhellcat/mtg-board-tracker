@@ -125,6 +125,14 @@
                 </div>
             </div>
 
+            <div class="middle-section stack-section">
+                <div class="zone zone-stack-area" data-zone="stack" data-player-index="0" id="zone-stack">
+                    <div class="zone-label stack-label">Stack</div>
+                    <div class="stack-cards" id="stack-cards"></div>
+                    <button id="btn-resolve-stack" class="stack-resolve-btn" style="display: none;">▶ Resolve</button>
+                </div>
+            </div>
+
             <div class="middle-section life-section">
                 <div class="life-counter" id="life-counter-1" data-player-index="1">
                     <span class="life-player-name" id="life-name-1">P2</span>
@@ -210,6 +218,7 @@
         </div>
         <div class="ctx-separator"></div>
         <div class="ctx-group">
+            <div class="ctx-item" data-action="move_to" data-zone="stack" style="display: none;">→ Stack</div>
             <div class="ctx-item" data-action="move_to" data-zone="library_bottom" style="display: none;">→ Library (bottom)</div>
         </div>
         <!-- Move-to items: shown for graveyard/exile cards via JS -->

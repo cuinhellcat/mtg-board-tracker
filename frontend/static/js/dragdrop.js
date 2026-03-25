@@ -194,9 +194,12 @@
         var msg = {
             action: 'move_card',
             card_id: cardId,
-            to_zone: targetZone,
-            to_player_index: targetPlayerIndex
+            to_zone: targetZone
         };
+        // Stack is a shared zone — preserve the card's existing controller
+        if (targetZone !== 'stack') {
+            msg.to_player_index = targetPlayerIndex;
+        }
         if (battlefieldGroup) {
             msg.battlefield_group = battlefieldGroup;
         }
