@@ -242,6 +242,8 @@ class GameEngine:
             "shuffle_library": self._handle_shuffle_library,
             "create_token": self._handle_create_token,
             "clone_card": self._handle_clone_card,
+            "become_copy": self._handle_become_copy,
+            "revert_copy": self._handle_revert_copy,
             "delete_card": self._handle_delete_card,
             "add_counter": self._handle_add_counter,
             "remove_counter": self._handle_remove_counter,
@@ -250,6 +252,8 @@ class GameEngine:
             "attach_card": self._handle_attach_card,
             "detach_card": self._handle_detach_card,
             "toggle_oracle_text": self._handle_toggle_oracle_text,
+            "set_note": self._handle_set_note,
+            "toggle_summoning_sick": self._handle_toggle_summoning_sick,
             "create_related_token": self._handle_create_related_token,
             "scry": self._handle_scry,
             "scry_resolve": self._handle_scry_resolve,
@@ -303,6 +307,13 @@ class GameEngine:
         self.state.zone_move_counter += 1
         card.zone = zone
         card.zone_moved_at = self.state.zone_move_counter
+        # Summoning sickness: creatures entering the battlefield get it (unless haste)
+        if zone == "battlefield":
+            is_creature = "Creature" in (card.type_line or "")
+            has_haste = "Haste" in (card.keywords or [])
+            card.summoning_sick = is_creature and not has_haste
+        else:
+            card.summoning_sick = False
 
     def _get_card(self, card_id: str) -> CardState:
         card = self.state.cards.get(card_id)
@@ -399,8 +410,8 @@ class GameEngine:
         elif to_zone != "battlefield":
             card.battlefield_group = None
 
-        # Returning to command zone increments commander tax
-        if to_zone == "command_zone" and card.is_commander:
+        # Casting from command zone increments commander tax
+        if from_zone == "command_zone" and card.is_commander:
             player = self._get_player(card.owner_index)
             player.commander_tax += 2
 
@@ -495,13 +506,15 @@ class GameEngine:
         active_idx = self.state.active_player_index
         active_name = self.state.players[active_idx].name
 
-        # --- Untap step: untap all permanents of the active player ---
+        # --- Untap step: untap all permanents + clear summoning sickness ---
         self.state.phase = "untap"
         untap_count = 0
         for card in self.state.cards.values():
-            if card.controller_index == active_idx and card.zone == "battlefield" and card.tapped:
-                card.tapped = False
-                untap_count += 1
+            if card.controller_index == active_idx and card.zone == "battlefield":
+                if card.tapped:
+                    card.tapped = False
+                    untap_count += 1
+                card.summoning_sick = False
 
         self._log_action("new_turn", f"Turn {self.state.turn} — {active_name}'s turn")
         if untap_count > 0:
@@ -520,7 +533,8 @@ class GameEngine:
         else:
             self._log_action("draw_card", f"{active_name} tried to draw but library is empty!")
 
-        # Leave phase on draw — player can advance to main1 when ready
+        # Advance to main1 after draw
+        self.state.phase = "main1"
 
 
     def _handle_draw_card(self, action: dict) -> dict:
@@ -603,16 +617,19 @@ class GameEngine:
             name=name,
             oracle_text=abilities,
             type_line=type_line,
-            power=str(power),
-            toughness=str(toughness),
+            power=str(power) if power is not None else None,
+            toughness=str(toughness) if toughness is not None else None,
             zone="battlefield",
             owner_index=player_index,
             controller_index=player_index,
             is_token=True,
             is_conjured=True,
+            scryfall_id=action.get("scryfall_id") or None,
+            image_uri=action.get("image_uri") or None,
+            large_image_uri=action.get("large_image_uri") or None,
         )
         self.state.cards[token_id] = token
-        self._log_action("create_token", f"{player.name} created a {name} token ({power}/{toughness})")
+        self._log_action("create_token", f"{player.name} created a {name} token")
         return {"ok": True, "card_id": token_id}
 
     def _handle_add_card(self, action: dict) -> dict:
@@ -700,6 +717,59 @@ class GameEngine:
         self.state.cards[clone_id] = clone
         self._log_action("clone_card", f"Cloned {card.name}")
         return {"ok": True, "card_id": clone_id}
+
+    def _handle_become_copy(self, action: dict) -> dict:
+        """Card takes on all copiable characteristics of the target card."""
+        card = self._get_card(action["card_id"])
+        target = self._get_card(action["target_card_id"])
+        old_name = card.name
+        # Save original characteristics for revert
+        card.original_characteristics = {
+            "name": card.name, "mana_cost": card.mana_cost, "type_line": card.type_line,
+            "oracle_text": card.oracle_text, "colors": list(card.colors),
+            "color_identity": list(card.color_identity), "power": card.power,
+            "toughness": card.toughness, "loyalty": card.loyalty, "cmc": card.cmc,
+            "keywords": list(card.keywords), "image_uri": card.image_uri,
+            "large_image_uri": card.large_image_uri, "scryfall_id": card.scryfall_id,
+            "layout": card.layout, "back_face": card.back_face.copy() if card.back_face else None,
+            "related_tokens": list(card.related_tokens),
+        }
+        # Copy copiable characteristics (MTG rule 707.2)
+        card.name = target.name
+        card.mana_cost = target.mana_cost
+        card.type_line = target.type_line
+        card.oracle_text = target.oracle_text
+        card.colors = list(target.colors)
+        card.color_identity = list(target.color_identity)
+        card.power = target.power
+        card.toughness = target.toughness
+        card.loyalty = target.loyalty
+        card.cmc = target.cmc
+        card.keywords = list(target.keywords)
+        card.image_uri = target.image_uri
+        card.large_image_uri = target.large_image_uri
+        card.scryfall_id = target.scryfall_id
+        card.layout = target.layout
+        card.back_face = target.back_face.copy() if target.back_face else None
+        card.related_tokens = list(target.related_tokens)
+        # Summoning sickness: if it became a creature, check haste
+        if "Creature" in (card.type_line or ""):
+            card.summoning_sick = "Haste" not in (card.keywords or [])
+        self._log_action("become_copy", f"{old_name} becomes a copy of {target.name}")
+        return {"ok": True}
+
+    def _handle_revert_copy(self, action: dict) -> dict:
+        """Revert a card to its original characteristics before it became a copy."""
+        card = self._get_card(action["card_id"])
+        orig = card.original_characteristics
+        if not orig:
+            return {"ok": False, "error": "No copy to revert"}
+        copy_name = card.name
+        for key, value in orig.items():
+            setattr(card, key, value)
+        card.original_characteristics = None
+        self._log_action("revert_copy", f"{copy_name} reverted to {card.name}")
+        return {"ok": True}
 
     def _handle_delete_card(self, action: dict) -> dict:
         card_id = action["card_id"]
@@ -833,6 +903,22 @@ class GameEngine:
         card.show_oracle_text = not card.show_oracle_text
         status = "enabled" if card.show_oracle_text else "disabled"
         self._log_action("toggle_oracle_text", f"Oracle text {status} for {card.name}")
+        return {"ok": True}
+
+    def _handle_set_note(self, action: dict) -> dict:
+        card = self._get_card(action["card_id"])
+        card.note = action.get("note", "").strip()
+        if card.note:
+            self._log_action("set_note", f"Note on {card.name}: {card.note[:50]}")
+        else:
+            self._log_action("set_note", f"Removed note from {card.name}")
+        return {"ok": True}
+
+    def _handle_toggle_summoning_sick(self, action: dict) -> dict:
+        card = self._get_card(action["card_id"])
+        card.summoning_sick = not card.summoning_sick
+        status = "on" if card.summoning_sick else "off"
+        self._log_action("toggle_summoning_sick", f"Summoning sickness {status} for {card.name}")
         return {"ok": True}
 
     def _handle_create_related_token(self, action: dict) -> dict:
@@ -1131,6 +1217,7 @@ class GameEngine:
                         layout=scryfall_data.get("layout", "normal"),
                         back_face=scryfall_data.get("back_face"),
                         related_tokens=scryfall_data.get("related_tokens", []),
+                        keywords=scryfall_data.get("keywords", []),
                     )
                     self.state.cards[card_id] = card
 
@@ -1235,9 +1322,33 @@ class GameEngine:
         return {"ok": True}
 
     def _handle_set_card_printing(self, action: dict) -> dict:
-        card = self._get_card(action["card_id"])
-        card.scryfall_id = action.get("scryfall_id", card.scryfall_id)
-        card.image_uri = action.get("image_uri", card.image_uri)
-        card.large_image_uri = action.get("large_image_uri", card.large_image_uri)
-        self._log_action("set_card_printing", f"Changed printing of {card.name}")
+        new_scryfall_id = action.get("scryfall_id")
+        new_image_uri = action.get("image_uri")
+        new_large_image_uri = action.get("large_image_uri")
+
+        # Update by card_name (all copies) or fall back to single card_id
+        card_name = action.get("card_name")
+        updated = []
+        if card_name:
+            for c in self.state.cards.values():
+                if c.name.lower() == card_name.lower():
+                    if new_scryfall_id:
+                        c.scryfall_id = new_scryfall_id
+                    if new_image_uri:
+                        c.image_uri = new_image_uri
+                    if new_large_image_uri:
+                        c.large_image_uri = new_large_image_uri
+                    updated.append(c.name)
+        elif action.get("card_id"):
+            card = self._get_card(action["card_id"])
+            if new_scryfall_id:
+                card.scryfall_id = new_scryfall_id
+            if new_image_uri:
+                card.image_uri = new_image_uri
+            if new_large_image_uri:
+                card.large_image_uri = new_large_image_uri
+            updated.append(card.name)
+
+        if updated:
+            self._log_action("set_card_printing", f"Changed printing of {updated[0]} ({len(updated)} card(s))")
         return {"ok": True}

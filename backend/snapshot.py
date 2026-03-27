@@ -266,6 +266,10 @@ def _format_card_full(card: CardState) -> str:
         oracle = card.oracle_text.replace("\n", " / ")
         parts.append(f"-- {oracle}")
 
+    # User note — always shown, appears like oracle text
+    if card.note:
+        parts.append(f"-- NOTE: {card.note}")
+
     # State annotations (only deviations from default)
     annotations = []
     if card.tapped:
@@ -307,6 +311,10 @@ def _format_card_brief(card: CardState) -> str:
     if card.show_oracle_text and card.oracle_text:
         oracle = card.oracle_text.replace("\n", " / ")
         parts.append(f"-- {oracle}")
+
+    # User note
+    if card.note:
+        parts.append(f"-- NOTE: {card.note}")
 
     return " ".join(parts)
 
@@ -351,7 +359,7 @@ def _format_card_perspective(card: CardState, is_own: bool) -> Optional[str]:
       - Use back_face data for rendering
     """
     if card.face_down:
-        fd_label = _FACE_DOWN_LABELS.get(card.face_down_type, "Face-down creature 2/2")
+        fd_label = _FACE_DOWN_LABELS.get(card.face_down_type, "Face-down Card")
         if is_own:
             return f"{card.name} (face down as {fd_label})"
         else:
@@ -400,12 +408,16 @@ def _render_battlefield_grouped(
     # Skip cards that are attached to another card (they render under parent)
     display_cards = []
     face_down_lines = []
+    creature_fd_lines = []
     for c in cards:
         if c.attached_to:
             continue
         fd_text = _format_card_perspective(c, is_own)
         if fd_text:
-            face_down_lines.append(f"    - {fd_text}")
+            if c.face_down_type in ("morph", "manifest", "cloaked"):
+                creature_fd_lines.append(f"    - {fd_text}")
+            else:
+                face_down_lines.append(f"    - {fd_text}")
         else:
             display_cards.append(_get_display_card(c))
 
@@ -432,8 +444,9 @@ def _render_battlefield_grouped(
                 for linked_id in item.linked_exile_cards:
                     linked = game_state.cards.get(linked_id)
                     if linked:
+                        linked_label = "face-down card" if linked.face_down else linked.name
                         land_linked_lines.append(
-                            f"    ({item.name} holds in exile: {linked.name})"
+                            f"    ({item.name} holds in exile: {linked_label})"
                         )
                 for att_id in item.attached_cards:
                     att = game_state.cards.get(att_id)
@@ -444,15 +457,17 @@ def _render_battlefield_grouped(
         lines.append(f"  Lands: {', '.join(land_strs)}")
         lines.extend(land_linked_lines)
 
-    if creatures:
+    if creatures or creature_fd_lines:
         lines.append("  Creatures:")
         for card in creatures:
             lines.append(f"    - {_format_card_full(card)}")
             for linked_id in card.linked_exile_cards:
                 linked = game_state.cards.get(linked_id)
                 if linked:
-                    lines.append(f"      -> holds in exile: {linked.name}")
+                    linked_label = "face-down card" if linked.face_down else linked.name
+                    lines.append(f"      -> holds in exile: {linked_label}")
             _render_attached_cards(card, game_state, lines)
+        lines.extend(creature_fd_lines)
 
     if others:
         lines.append("  Other Permanents:")
@@ -461,7 +476,8 @@ def _render_battlefield_grouped(
             for linked_id in card.linked_exile_cards:
                 linked = game_state.cards.get(linked_id)
                 if linked:
-                    lines.append(f"      -> holds in exile: {linked.name}")
+                    linked_label = "face-down card" if linked.face_down else linked.name
+                    lines.append(f"      -> holds in exile: {linked_label}")
             _render_attached_cards(card, game_state, lines)
 
     if face_down_lines:

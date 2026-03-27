@@ -165,6 +165,7 @@ async def api_set_printing(request: Request):
     card_name = body.get("card_name", "")
     scryfall_id = body.get("scryfall_id", "")
     image_uri = body.get("image_uri", "")
+    large_image_uri = body.get("large_image_uri", "")
     set_name = body.get("set_name", "")
 
     if not card_name or not scryfall_id or not image_uri:
@@ -174,22 +175,23 @@ async def api_set_printing(request: Request):
         )
 
     # Persist preference
-    set_preference(card_name, scryfall_id, image_uri, set_name)
+    set_preference(card_name, scryfall_id, image_uri, set_name, large_image_uri)
 
-    # Update in-game card if card_id provided and game is active
-    if card_id and engine.state.game_started:
+    # Update all in-game cards with the same name
+    if engine.state.game_started:
         result = engine.dispatch({
             "type": "set_card_printing",
-            "card_id": card_id,
+            "card_name": card_name,
             "scryfall_id": scryfall_id,
             "image_uri": image_uri,
+            "large_image_uri": large_image_uri,
         })
         if result.get("ok"):
             await broadcast_state()
 
     # Download the new image in background
     asyncio.create_task(_download_images_background([
-        {"scryfall_id": scryfall_id, "image_uri": image_uri}
+        {"scryfall_id": scryfall_id, "image_uri": image_uri, "large_image_uri": large_image_uri}
     ]))
 
     return JSONResponse({"success": True})
@@ -260,6 +262,8 @@ async def api_new_game(request: Request):
             if pref:
                 sd["scryfall_id"] = pref["scryfall_id"]
                 sd["image_uri"] = pref["image_uri"]
+                if pref.get("large_image_uri"):
+                    sd["large_image_uri"] = pref["large_image_uri"]
                 card_entry["scryfall_data"] = sd
                 continue
 
@@ -272,9 +276,11 @@ async def api_new_game(request: Request):
                 if alt:
                     sd["scryfall_id"] = alt["scryfall_id"]
                     sd["image_uri"] = alt["image_uri"]
+                    sd["large_image_uri"] = alt.get("large_image_uri", "")
                     card_entry["scryfall_data"] = sd
                     set_preference(card_name, alt["scryfall_id"],
-                                   alt["image_uri"], alt.get("set_name", ""))
+                                   alt["image_uri"], alt.get("set_name", ""),
+                                   alt.get("large_image_uri", ""))
 
         # Collect image data for background download
         for card_entry in deck_cards:

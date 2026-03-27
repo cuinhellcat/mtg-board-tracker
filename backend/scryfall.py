@@ -257,6 +257,7 @@ async def update_cache(progress_callback=None) -> Dict[str, Any]:
                 "set": card.get("set", ""),
                 "set_name": card.get("set_name", ""),
                 "layout": layout,
+                "keywords": card.get("keywords", []),
             }
             if back_face:
                 entry["back_face"] = back_face

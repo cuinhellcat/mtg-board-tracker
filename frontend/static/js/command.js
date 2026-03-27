@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatSendBtn = document.getElementById('chat-send');
     const snapshotTextEl = document.getElementById('snapshot-text');
     const notesTextEl = document.getElementById('notes-text');
+    const clutterTextEl = document.getElementById('clutter-text');
     const actionLogEl = document.getElementById('action-log');
     const lifeCountersEl = document.getElementById('life-counters');
     const phaseTrackerEl = document.getElementById('phase-tracker');
@@ -52,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLifeCounters(state);
         renderActionLog(state.action_log || []);
         renderTurnInfo(state);
+        if (state.turn > 1) document.getElementById('copy-bot-hand').classList.remove('btn-blink');
         // Request updated snapshot
         requestSnapshot();
     });
@@ -62,6 +64,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const forceAllOracleEl = document.getElementById('force-all-oracle');
+    forceAllOracleEl.checked = localStorage.getItem('forceAllOracle') === 'true';
+
+    // Reduce Clutter — persistent LLM instructions
+    clutterTextEl.value = localStorage.getItem('mtg-reduce-clutter') || '';
+    clutterTextEl.addEventListener('input', () => {
+        localStorage.setItem('mtg-reduce-clutter', clutterTextEl.value);
+    });
 
     function requestSnapshot() {
         MTGSocket.send({
@@ -72,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     forceAllOracleEl.addEventListener('change', () => {
+        localStorage.setItem('forceAllOracle', forceAllOracleEl.checked);
         requestSnapshot();
     });
 
@@ -290,6 +300,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function copySnapshot() {
         let text = snapshotTextEl.value || '';
+
+        // Append reduce-clutter instructions (persistent)
+        const clutter = clutterTextEl.value.trim();
+        if (clutter) {
+            text += '\n\n=== INSTRUCTIONS ===\n' + clutter;
+        }
 
         // Append additional notes if any
         const notes = notesTextEl.value.trim();

@@ -36,6 +36,12 @@
     /** @type {string|null} Card ID to attach (Aura/Equipment). */
     var attachCardId = null;
 
+    /** @type {boolean} Whether we are in "become copy" mode waiting for a click. */
+    var copyMode = false;
+
+    /** @type {string|null} Card ID that will become a copy. */
+    var copyCardId = null;
+
     /** @type {string|null} Card ID selected in search modal. */
     var searchSelectedCardId = null;
 
@@ -44,6 +50,9 @@
 
     /** Debounce token for render. */
     var _renderRafId = null;
+
+    /** True while a drag-and-drop is in progress — suppresses hover preview. */
+    var _isDragging = false;
 
     /* ==================================================================
        ERROR TOAST
@@ -86,7 +95,7 @@
         var tokenCb = document.getElementById('card-picker-token-cb');
         if (options && options.showTokenToggle) {
             tokenToggle.style.display = '';
-            tokenCb.checked = false;
+            tokenCb.checked = !!(options && options.defaultTokenMode);
         } else {
             tokenToggle.style.display = 'none';
             tokenCb.checked = false;
@@ -351,6 +360,7 @@
         if (isTransformed) el.classList.add('transformed');
 
         if (card.tapped) el.classList.add('tapped');
+        if (card.summoning_sick) el.classList.add('summoning-sick');
         if (card.attacking) el.classList.add('attacking');
         if (card.face_down) {
             el.classList.add('face-down');
@@ -427,6 +437,12 @@
             oracleIndicator = '<div class="oracle-text-indicator">☰ Oracle</div>';
         }
 
+        // Note indicator
+        var noteIndicator = '';
+        if (card.note) {
+            noteIndicator = '<div class="note-indicator" title="' + escapeHtml(card.note) + '">📝</div>';
+        }
+
         // Inventory toggle indicator (shows when card has attachments/exiled)
         var inventoryToggle = '';
         if (hasInventory) {
@@ -444,6 +460,7 @@
             customPtHtml +
             counterHtml +
             oracleIndicator +
+            noteIndicator +
             inventoryToggle;
 
         // --- Event listeners ---
@@ -533,6 +550,12 @@
             // If in attach mode, handle differently
             if (attachMode) {
                 handleAttachTarget(card.id);
+                return;
+            }
+
+            // If in copy mode, handle differently
+            if (copyMode) {
+                handleCopyTarget(card.id);
                 return;
             }
 
@@ -735,6 +758,7 @@
 
         // Stack zone
         renderStackArea(state);
+
     }
 
     /** Classify a battlefield card into creature / land / other.
@@ -756,6 +780,9 @@
         if (!zoneEl) return;
         var container = zoneEl.querySelector('.zone-cards');
         if (!container) return;
+
+        // Preserve scroll position across re-render
+        var savedScrollTop = container.scrollTop;
 
         // Filter out cards that are attached to another card (they appear as badges)
         var visibleCards = cards.filter(function (c) { return !c.attached_to; });
@@ -784,12 +811,44 @@
 
         var nonliving = document.createElement('div');
         nonliving.className = 'bf-group bf-nonliving';
-        nonliving.appendChild(makeSubzone('bf-subgroup bf-lands', 'Lands', 'land', lands));
-        nonliving.appendChild(makeSubzone('bf-subgroup bf-other', 'Other', 'other', other));
+        var landsDiv = makeSubzone('bf-subgroup bf-lands', 'Lands', 'land', lands);
+        var otherDiv = makeSubzone('bf-subgroup bf-other', 'Other', 'other', other);
+
+        // Apply persisted split ratio
+        var savedRatio = parseFloat(localStorage.getItem('mtg-bf-split') || '50');
+        landsDiv.style.flex = '0 0 ' + savedRatio + '%';
+        otherDiv.style.flex = '1 1 auto';
+
+        // Draggable splitter between Lands and Other
+        var splitter = document.createElement('div');
+        splitter.className = 'bf-splitter';
+        splitter.addEventListener('mousedown', function (startEvt) {
+            startEvt.preventDefault();
+            var rect = nonliving.getBoundingClientRect();
+            function onMove(moveEvt) {
+                var pct = ((moveEvt.clientX - rect.left) / rect.width) * 100;
+                pct = Math.max(10, Math.min(90, pct));
+                landsDiv.style.flex = '0 0 ' + pct + '%';
+                localStorage.setItem('mtg-bf-split', pct.toFixed(1));
+            }
+            function onUp() {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+
+        nonliving.appendChild(landsDiv);
+        nonliving.appendChild(splitter);
+        nonliving.appendChild(otherDiv);
         container.appendChild(nonliving);
 
         var creaturesDiv = makeSubzone('bf-group bf-creatures', 'Creatures', 'creature', creatures);
         container.appendChild(creaturesDiv);
+
+        // Restore scroll position
+        container.scrollTop = savedScrollTop;
     }
 
     /**
@@ -829,10 +888,12 @@
         var container = zoneEl.querySelector('.zone-cards');
         if (!container) return;
 
+        var savedScrollTop = container.scrollTop;
         container.innerHTML = '';
         cards.forEach(function (card) {
             container.appendChild(createCardElement(card));
         });
+        container.scrollTop = savedScrollTop;
     }
 
     /**
@@ -846,6 +907,7 @@
         var container = zoneEl.querySelector('.zone-cards');
         if (!container) return;
 
+        var savedScrollTop = container.scrollTop;
         var handCards = getCardsInZone(state, 'hand', playerIndex);
         document.getElementById('hand-count-' + playerIndex).textContent = handCards.length;
 
@@ -864,6 +926,7 @@
                 container.appendChild(createCardElement(card));
             });
         }
+        container.scrollTop = savedScrollTop;
     }
 
     /**
@@ -1028,7 +1091,7 @@
             wrapper.style.transform = 'rotate(' + angle + 'deg)';
             wrapper.style.zIndex = 500 + i;
 
-            var imgSrc = card.scryfall_id ? '/cache/images/' + card.scryfall_id + '_large.jpg' : '';
+            var imgSrc = card.image_uri || '';
             var img = document.createElement('img');
             img.className = 'stack-card-img';
             img.src = imgSrc;
@@ -1090,6 +1153,25 @@
         var oracleItem = menu.querySelector('[data-action="toggle_oracle_text"]');
         if (oracleItem) {
             oracleItem.textContent = card.show_oracle_text ? '☰ Oracle Text für LLM ✓' : '☰ Oracle Text für LLM';
+        }
+
+        // Revert copy: only show if card has original_characteristics
+        var revertItem = menu.querySelector('[data-action="revert_copy"]');
+        if (revertItem) {
+            revertItem.style.display = card.original_characteristics ? 'block' : 'none';
+        }
+
+        // Note indicator
+        var noteItem = menu.querySelector('[data-action="set_note"]');
+        if (noteItem) {
+            noteItem.textContent = card.note ? '📝 Note ✓' : '📝 Note...';
+        }
+
+        // Summoning sickness toggle: only on battlefield
+        var summSickItem = menu.querySelector('[data-action="toggle_summoning_sick"]');
+        if (summSickItem) {
+            summSickItem.style.display = (card.zone === 'battlefield') ? 'block' : 'none';
+            summSickItem.textContent = card.summoning_sick ? '💫 Summoning Sickness ✓' : '💫 Summoning Sickness';
         }
 
         var deleteItem = menu.querySelector('[data-action="delete_card"]');
@@ -1268,6 +1350,14 @@
                 MTGSocket.send({ action: 'clone_card', card_id: cardId });
                 break;
 
+            case 'become_copy':
+                startCopyMode(cardId);
+                break;
+
+            case 'revert_copy':
+                MTGSocket.send({ action: 'revert_copy', card_id: cardId });
+                break;
+
             case 'toggle_face_down':
                 MTGSocket.send({ action: 'set_face_down', card_id: cardId });
                 break;
@@ -1326,12 +1416,25 @@
                 MTGSocket.send({ action: 'detach_card', card_id: cardId });
                 break;
 
+            case 'toggle_summoning_sick':
+                MTGSocket.send({ action: 'toggle_summoning_sick', card_id: cardId });
+                break;
+
+            case 'set_note':
+                var ctxCardNote = currentState && currentState.cards[cardId];
+                var existingNote = (ctxCardNote && ctxCardNote.note) || '';
+                var newNote = prompt('Note (appears in snapshot as oracle text):', existingNote);
+                if (newNote !== null) {
+                    MTGSocket.send({ action: 'set_note', card_id: cardId, note: newNote });
+                }
+                break;
+
             case 'toggle_oracle_text':
                 MTGSocket.send({ action: 'toggle_oracle_text', card_id: cardId });
                 break;
 
             case 'copy_oracle_text':
-                var ctxCard = gameState.cards[cardId];
+                var ctxCard = currentState && currentState.cards[cardId];
                 if (ctxCard) {
                     var text = ctxCard.name;
                     if (ctxCard.mana_cost) text += ' ' + ctxCard.mana_cost;
@@ -1339,7 +1442,21 @@
                     if (ctxCard.oracle_text) text += '\n\n' + ctxCard.oracle_text;
                     if (ctxCard.power !== null && ctxCard.toughness !== null) text += '\n\n' + ctxCard.power + '/' + ctxCard.toughness;
                     if (ctxCard.loyalty !== null) text += '\n\nLoyalty: ' + ctxCard.loyalty;
-                    navigator.clipboard.writeText(text);
+                    var fallbackCopy = function(t) {
+                        var ta = document.createElement('textarea');
+                        ta.value = t;
+                        ta.style.position = 'fixed';
+                        ta.style.opacity = '0';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    };
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(text).catch(function() { fallbackCopy(text); });
+                    } else {
+                        fallbackCopy(text);
+                    }
                 }
                 break;
 
@@ -1363,39 +1480,50 @@
         return 0;
     }
 
-    /** Handle create token — opens card picker, then prompts for details. */
+    /** Handle create token — opens card picker with token search, then creates. */
     function handleCreateToken(playerIndex) {
-        // Determine which player to create it for
         var pi = playerIndex !== undefined ? playerIndex : 1;
-        if (pi === undefined && contextCardId && currentState && currentState.cards[contextCardId]) {
-            pi = currentState.cards[contextCardId].controller_index;
-        }
 
-        var name = prompt('Token Name:');
-        if (!name) return;
-        var pt = prompt('Power/Toughness (e.g. 2/2, leer für Nicht-Kreatur):');
-        var power = null;
-        var toughness = null;
-        var defaultType = 'Token — ' + name.trim();
-        if (pt && pt.trim()) {
-            var parts = pt.split('/');
-            power = (parts[0] || '0').trim();
-            toughness = (parts[1] || '0').trim();
-            defaultType = 'Token Creature — ' + name.trim();
-        }
-        var typeLine = prompt('Type line:', defaultType);
-        if (!typeLine) typeLine = defaultType;
-        var abilities = prompt('Abilities (optional):') || '';
-
-        MTGSocket.send({
-            action: 'create_token',
-            player_index: pi,
-            name: name.trim(),
-            power: power,
-            toughness: toughness,
-            type_line: typeLine.trim(),
-            abilities: abilities.trim()
-        });
+        openCardPicker('Token erstellen — Name suchen', function (token) {
+            // Token found via search: create directly with Scryfall data
+            if (token.type_line) {
+                MTGSocket.send({
+                    action: 'create_token',
+                    player_index: pi,
+                    name: token.name,
+                    power: token.power || null,
+                    toughness: token.toughness || null,
+                    type_line: token.type_line,
+                    abilities: token.oracle_text || '',
+                    scryfall_id: token.scryfall_id || '',
+                    image_uri: token.image_uri || '',
+                    large_image_uri: token.large_image_uri || ''
+                });
+            } else {
+                // Fallback: manual prompts for custom tokens
+                var name = token.name;
+                var pt = prompt('Power/Toughness (z.B. 2/2, leer für Nicht-Kreatur):');
+                var power = null, toughness = null;
+                var defaultType = 'Token — ' + name.trim();
+                if (pt && pt.trim()) {
+                    var parts = pt.split('/');
+                    power = (parts[0] || '0').trim();
+                    toughness = (parts[1] || '0').trim();
+                    defaultType = 'Token Creature — ' + name.trim();
+                }
+                var typeLine = prompt('Type line:', defaultType) || defaultType;
+                var abilities = prompt('Abilities (optional):') || '';
+                MTGSocket.send({
+                    action: 'create_token',
+                    player_index: pi,
+                    name: name.trim(),
+                    power: power,
+                    toughness: toughness,
+                    type_line: typeLine.trim(),
+                    abilities: abilities.trim()
+                });
+            }
+        }, { showTokenToggle: true, defaultTokenMode: true });
     }
 
     /* ==================================================================
@@ -1542,12 +1670,28 @@
                 var addZone = actionType === 'bf_add_card_hand' ? 'hand' : 'battlefield';
                 var addPi = pi;
                 openCardPicker('Karte hinzufügen — Name suchen', function (card) {
-                    MTGSocket.send({
-                        action: 'add_card',
-                        player_index: addPi,
-                        name: card.name.trim(),
-                        zone: addZone
-                    });
+                    var isToken = card.type_line && card.type_line.toLowerCase().indexOf('token') !== -1;
+                    if (isToken) {
+                        MTGSocket.send({
+                            action: 'create_token',
+                            player_index: addPi,
+                            name: card.name,
+                            power: card.power || null,
+                            toughness: card.toughness || null,
+                            type_line: card.type_line,
+                            abilities: card.oracle_text || '',
+                            scryfall_id: card.scryfall_id || '',
+                            image_uri: card.image_uri || '',
+                            large_image_uri: card.large_image_uri || ''
+                        });
+                    } else {
+                        MTGSocket.send({
+                            action: 'add_card',
+                            player_index: addPi,
+                            name: card.name.trim(),
+                            zone: addZone
+                        });
+                    }
                 }, { showTokenToggle: true });
                 break;
         }
@@ -1606,6 +1750,32 @@
     }
 
     /* ==================================================================
+       BECOME COPY MODE
+       ================================================================== */
+
+    function startCopyMode(cardId) {
+        copyMode = true;
+        copyCardId = cardId;
+        document.getElementById('copy-card-prompt').style.display = 'flex';
+    }
+
+    function cancelCopyMode() {
+        copyMode = false;
+        copyCardId = null;
+        document.getElementById('copy-card-prompt').style.display = 'none';
+    }
+
+    function handleCopyTarget(targetCardId) {
+        if (!copyCardId) return;
+        MTGSocket.send({
+            action: 'become_copy',
+            card_id: copyCardId,
+            target_card_id: targetCardId
+        });
+        cancelCopyMode();
+    }
+
+    /* ==================================================================
        CARD PREVIEW (HOVER)
        ================================================================== */
 
@@ -1625,6 +1795,8 @@
     var previewZoomCard = null;  // scryfall_id of currently previewed card
     var previewCardRef = null;   // full card object for current preview
     var cardZoomPrefs = JSON.parse(localStorage.getItem('cardZoomPrefs') || '{}');
+    var globalHoverZoom = parseInt(localStorage.getItem('mtg-hover-zoom') || '0', 10);
+
 
     function saveCardZoomPref(scryfallId, zoomIdx) {
         if (!scryfallId) return;
@@ -1654,7 +1826,7 @@
         // Switch to large image when zoomed in
         if (zoom > 1 && previewCardRef) {
             var largeUri = previewCardRef.large_image_uri;
-            if (largeUri && previewImg && previewImg.src.indexOf('_large') === -1) {
+            if (largeUri && previewImg && previewImg.src !== largeUri) {
                 previewImg.src = largeUri;
             }
             var bf = previewCardRef.back_face || {};
@@ -1676,10 +1848,11 @@
     }
 
     function showCardPreview(card, e) {
+        if (_isDragging) return;
         if (!previewEl) initPreviewRefs();
         previewCardRef = card;
         previewZoomCard = card.scryfall_id || card.id;
-        previewZoomIndex = cardZoomPrefs[previewZoomCard] || 0;
+        previewZoomIndex = cardZoomPrefs[previewZoomCard] !== undefined ? cardZoomPrefs[previewZoomCard] : globalHoverZoom;
 
         // Resolve display image — use back face image when transformed
         var bf = card.back_face || {};
@@ -1923,7 +2096,7 @@
                         if (!currentState) return;
                         var cards = getCardsInZone(currentState, 'graveyard', pi);
                         if (cards.length > 0) {
-                            showZoneViewer('Graveyard — ' + getPlayerName(pi), cards);
+                            showZoneViewer('Graveyard — ' + getPlayerName(pi), cards, 'graveyard');
                         }
                     });
                 }
@@ -1936,7 +2109,7 @@
                         if (!currentState) return;
                         var cards = getCardsInZone(currentState, 'exile', pi);
                         if (cards.length > 0) {
-                            showZoneViewer('Exile — ' + getPlayerName(pi), cards);
+                            showZoneViewer('Exile — ' + getPlayerName(pi), cards, 'exile');
                         }
                     });
                 }
@@ -1951,24 +2124,30 @@
         return 'Player ' + (pi + 1);
     }
 
-    function showZoneViewer(title, cards) {
+    var zvSelectedCardId = null;
+    var zvSourceZone = null;
+
+    function showZoneViewer(title, cards, sourceZone) {
+        zvSelectedCardId = null;
+        zvSourceZone = sourceZone || null;
         var modal = document.getElementById('zone-viewer-modal');
         document.getElementById('zone-viewer-title').textContent = title;
+        document.getElementById('zv-destination').style.display = 'none';
 
-        var list = document.getElementById('zone-viewer-list');
-        list.innerHTML = '';
+        var grid = document.getElementById('zone-viewer-list');
+        grid.innerHTML = '';
 
         cards.forEach(function (card) {
             var item = document.createElement('div');
-            item.className = 'zone-viewer-card';
+            item.className = 'zv-item';
             item.dataset.cardId = card.id;
 
             if (card.image_uri) {
                 var img = document.createElement('img');
                 img.src = card.image_uri;
                 img.alt = card.name;
+                img.loading = 'lazy';
                 img.onerror = function () {
-                    // Replace with fallback
                     this.parentNode.innerHTML = createZoneViewerFallback(card);
                 };
                 item.appendChild(img);
@@ -1976,40 +2155,76 @@
                 item.innerHTML = createZoneViewerFallback(card);
             }
 
-            var nameLabel = document.createElement('div');
-            nameLabel.style.fontSize = '11px';
-            nameLabel.style.color = '#e0e0e0';
-            nameLabel.style.textAlign = 'center';
-            nameLabel.style.maxWidth = '160px';
-            nameLabel.style.overflow = 'hidden';
-            nameLabel.style.textOverflow = 'ellipsis';
-            nameLabel.style.whiteSpace = 'nowrap';
-            nameLabel.textContent = card.name;
-            item.appendChild(nameLabel);
+            var label = document.createElement('div');
+            label.className = 'zv-label';
+            label.textContent = card.name;
+            item.appendChild(label);
 
-            // Right-click on a card in the viewer for context menu
+            // Left-click: select card, show destination buttons
+            item.addEventListener('click', function () {
+                zvSelectedCardId = card.id;
+                document.getElementById('zv-selected-name').textContent = card.name;
+                document.getElementById('zv-destination').style.display = 'block';
+                // Hide destination button matching current zone
+                var destBtns = document.querySelectorAll('.zv-dest-buttons .btn');
+                for (var i = 0; i < destBtns.length; i++) {
+                    destBtns[i].style.display = (destBtns[i].dataset.dest === zvSourceZone) ? 'none' : '';
+                }
+                // Selected styling
+                grid.querySelectorAll('.zv-item').forEach(function (el) { el.classList.remove('zv-selected'); });
+                item.classList.add('zv-selected');
+            });
+
+            // Hover preview
+            item.addEventListener('mouseenter', function (e) { showCardPreview(card, e); });
+            item.addEventListener('mousemove', function (e) { moveCardPreview(e); });
+            item.addEventListener('mouseleave', function () { hideCardPreview(); });
+
+            // Right-click: context menu
             item.addEventListener('contextmenu', function (e) {
                 e.preventDefault();
                 e.stopPropagation();
                 showCardContextMenu(e, card);
             });
 
-            list.appendChild(item);
+            grid.appendChild(item);
         });
 
         modal.style.display = 'flex';
     }
 
+    function handleZvDestination(toZone) {
+        if (!zvSelectedCardId) return;
+        if (toZone === 'library_top') {
+            MTGSocket.send({ action: 'move_card', card_id: zvSelectedCardId, to_zone: 'library', to_player_index: getCardOwner(zvSelectedCardId) });
+        } else if (toZone === 'library_bottom') {
+            MTGSocket.send({ action: 'bottom_card', card_id: zvSelectedCardId });
+        } else {
+            MTGSocket.send({ action: 'move_card', card_id: zvSelectedCardId, to_zone: toZone, to_player_index: getCardOwner(zvSelectedCardId) });
+        }
+        // Remove the card from the grid
+        var el = document.querySelector('.zv-item[data-card-id="' + zvSelectedCardId + '"]');
+        if (el) el.remove();
+        zvSelectedCardId = null;
+        document.getElementById('zv-destination').style.display = 'none';
+        // Close modal if no cards left
+        if (document.getElementById('zone-viewer-list').children.length === 0) {
+            hideZoneViewer();
+        }
+    }
+
     function createZoneViewerFallback(card) {
-        return '<div class="zone-viewer-card-fallback">' +
-            '<div class="zv-name">' + escapeHtml(card.name) + '</div>' +
-            '<div class="zv-type">' + escapeHtml(card.type_line) + '</div>' +
-            '<div class="zv-text">' + escapeHtml(card.oracle_text || '') + '</div>' +
+        return '<div class="zv-fallback">' +
+            '<div class="zv-fb-name">' + escapeHtml(card.name) + '</div>' +
+            '<div class="zv-fb-type">' + escapeHtml(card.type_line) + '</div>' +
+            '<div class="zv-fb-text">' + escapeHtml(card.oracle_text || '') + '</div>' +
             '</div>';
     }
 
     function hideZoneViewer() {
         document.getElementById('zone-viewer-modal').style.display = 'none';
+        hideCardPreview();
+        zvSelectedCardId = null;
     }
 
     // ------------------------------------------------------------------
@@ -2103,6 +2318,7 @@
                 card_name: printingPickerCardName,
                 scryfall_id: printing.scryfall_id,
                 image_uri: printing.image_uri,
+                large_image_uri: printing.large_image_uri || '',
                 set_name: printing.set_name || ''
             })
         }).then(function () {
@@ -2355,6 +2571,11 @@
             if (attachMode && !e.target.closest('.card')) {
                 cancelAttachMode();
             }
+
+            // Cancel copy mode on click that is not on a card
+            if (copyMode && !e.target.closest('.card')) {
+                cancelCopyMode();
+            }
         });
 
         // Card context menu actions
@@ -2391,6 +2612,12 @@
         document.getElementById('attach-card-cancel').addEventListener('click', function (e) {
             e.stopPropagation();
             cancelAttachMode();
+        });
+
+        // Copy card cancel
+        document.getElementById('copy-card-cancel').addEventListener('click', function (e) {
+            e.stopPropagation();
+            cancelCopyMode();
         });
 
         // Stack resolve button
@@ -2446,6 +2673,13 @@
         // Zone viewer close
         document.getElementById('zone-viewer-close').addEventListener('click', function () {
             hideZoneViewer();
+        });
+
+        // Zone viewer destination buttons
+        document.querySelectorAll('.zv-dest-buttons .btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                handleZvDestination(this.dataset.dest);
+            });
         });
 
         // Printing picker cancel
@@ -2558,6 +2792,10 @@
         // Initialize drag-drop
         DragDrop.init();
 
+        // Hide hover preview during drag-and-drop
+        document.addEventListener('dragstart', function () { _isDragging = true; hideCardPreview(); });
+        document.addEventListener('dragend',   function () { _isDragging = false; });
+
         // Set up static UI interactions
         setupLifeCounters();
         setupPhaseTracker();
@@ -2627,6 +2865,36 @@
                     sizeSlider.value = CARD_SIZE_DEFAULT;
                     applyCardSize(CARD_SIZE_DEFAULT);
                     localStorage.removeItem('mtg-card-width');
+                });
+            }
+        }
+
+        // Hover image scale slider (0–3, maps to ZOOM_LEVELS indices)
+        var hoverSlider = document.getElementById('hover-scale-slider');
+        if (hoverSlider) {
+            var savedHoverZoom = localStorage.getItem('mtg-hover-zoom');
+            if (savedHoverZoom !== null) {
+                globalHoverZoom = parseInt(savedHoverZoom, 10);
+                hoverSlider.value = globalHoverZoom;
+            }
+            hoverSlider.addEventListener('input', function () {
+                globalHoverZoom = parseInt(hoverSlider.value, 10);
+                localStorage.setItem('mtg-hover-zoom', globalHoverZoom);
+                cardZoomPrefs = {};
+                localStorage.removeItem('cardZoomPrefs');
+                previewZoomIndex = globalHoverZoom;
+                applyPreviewZoom();
+            });
+            var hoverResetBtn = document.getElementById('btn-hover-scale-reset');
+            if (hoverResetBtn) {
+                hoverResetBtn.addEventListener('click', function () {
+                    globalHoverZoom = 0;
+                    hoverSlider.value = 0;
+                    localStorage.removeItem('mtg-hover-zoom');
+                    cardZoomPrefs = {};
+                    localStorage.removeItem('cardZoomPrefs');
+                    previewZoomIndex = 0;
+                    applyPreviewZoom();
                 });
             }
         }

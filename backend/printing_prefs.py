@@ -48,12 +48,13 @@ def get_preference(card_name: str) -> Optional[Dict[str, Any]]:
     return prefs.get(card_name.lower().strip())
 
 
-def set_preference(card_name: str, scryfall_id: str, image_uri: str, set_name: str) -> None:
+def set_preference(card_name: str, scryfall_id: str, image_uri: str, set_name: str, large_image_uri: str = "") -> None:
     """Save a printing preference for a card."""
     prefs = load_preferences()
     prefs[card_name.lower().strip()] = {
         "scryfall_id": scryfall_id,
         "image_uri": image_uri,
+        "large_image_uri": large_image_uri,
         "set_name": set_name,
     }
     save_preferences(prefs)

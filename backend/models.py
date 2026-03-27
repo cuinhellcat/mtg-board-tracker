@@ -37,6 +37,7 @@ class CardState(BaseModel):
     attached_cards: List[str] = Field(default_factory=list)  # IDs of Auras/Equipment attached to this card
     attached_to: Optional[str] = None  # ID of card this Aura/Equipment is attached to
     show_oracle_text: bool = False  # If True, include oracle text in LLM snapshot
+    note: str = ""  # User note — shown in snapshot as if part of oracle text
     face_down: bool = False
     face_down_type: Optional[str] = None  # "morph", "manifest", "cloaked" — visual label only
     attacking: bool = False
@@ -48,8 +49,11 @@ class CardState(BaseModel):
     layout: str = "normal"  # "normal", "transform", "modal_dfc", "flip", etc.
     back_face: Optional[Dict] = None  # {name, oracle_text, mana_cost, type_line, power, toughness, loyalty, image_uri}
     transformed: bool = False
+    keywords: List[str] = Field(default_factory=list)  # Scryfall keywords, e.g. ["Haste", "Flying"]
+    summoning_sick: bool = False  # True on the turn a creature enters the battlefield (no haste)
     # Related tokens (from Scryfall all_parts)
     related_tokens: List[Dict] = Field(default_factory=list)  # [{name, type_line, scryfall_id, uri}]
+    original_characteristics: Optional[Dict] = None  # Saved before "become copy" so it can be reverted
 
 
 class PlayerState(BaseModel):
