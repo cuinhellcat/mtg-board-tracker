@@ -91,8 +91,12 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     # --- YOUR STATUS (LLM) ---
     lines.append(f"--- YOUR STATUS ({llm_player.name}) ---")
     lines.append(f"Life: {llm_player.life}")
-    if llm_player.commander_tax > 0:
-        lines.append(f"Commander Tax: {llm_player.commander_tax}")
+    for cmd_name, cmd_tax in llm_player.commander_taxes.items():
+        if cmd_tax > 0:
+            if len(llm_player.commander_taxes) > 1:
+                lines.append(f"Commander Tax ({cmd_name}): {cmd_tax}")
+            else:
+                lines.append(f"Commander Tax: {cmd_tax}")
     for cname, cval in llm_player.extra_counters.items():
         if cval > 0:
             lines.append(f"{cname}: {cval}")
@@ -132,16 +136,21 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     if llm_command:
         lines.append("Command Zone:")
         for card in llm_command:
-            cast_count = llm_player.commander_tax // 2
-            cast_note = f" (cast {cast_count} times previously)" if cast_count > 0 else ""
+            cmd_tax = llm_player.commander_taxes.get(card.name, 0)
+            cast_count = cmd_tax // 2
+            cast_note = f" (cast {cast_count}x, tax {cmd_tax})" if cast_count > 0 else ""
             lines.append(f"  - {_format_card_brief(card)}{cast_note}")
         lines.append("")
 
     # --- OPPONENT STATUS (Human) ---
     lines.append(f"--- OPPONENT STATUS ({human_player.name}) ---")
     lines.append(f"Life: {human_player.life}")
-    if human_player.commander_tax > 0:
-        lines.append(f"Commander Tax: {human_player.commander_tax}")
+    for cmd_name, cmd_tax in human_player.commander_taxes.items():
+        if cmd_tax > 0:
+            if len(human_player.commander_taxes) > 1:
+                lines.append(f"Commander Tax ({cmd_name}): {cmd_tax}")
+            else:
+                lines.append(f"Commander Tax: {cmd_tax}")
     for cname, cval in human_player.extra_counters.items():
         if cval > 0:
             lines.append(f"{cname}: {cval}")
@@ -176,8 +185,9 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     if human_command:
         lines.append("Command Zone:")
         for card in human_command:
-            cast_count = human_player.commander_tax // 2
-            cast_note = f" (cast {cast_count} times previously)" if cast_count > 0 else ""
+            cmd_tax = human_player.commander_taxes.get(card.name, 0)
+            cast_count = cmd_tax // 2
+            cast_note = f" (cast {cast_count}x, tax {cmd_tax})" if cast_count > 0 else ""
             lines.append(f"  - {_format_card_brief(card)}{cast_note}")
         lines.append("")
 

@@ -277,6 +277,7 @@ class GameEngine:
             "set_loyalty": self._handle_set_loyalty,
             "transform_card": self._handle_transform_card,
             "mill": self._handle_mill,
+            "set_quantity": self._handle_set_quantity,
         }
 
         handler = handler_map.get(action_type)
@@ -410,10 +411,10 @@ class GameEngine:
         elif to_zone != "battlefield":
             card.battlefield_group = None
 
-        # Casting from command zone increments commander tax
+        # Casting from command zone increments that commander's tax
         if from_zone == "command_zone" and card.is_commander:
             player = self._get_player(card.owner_index)
-            player.commander_tax += 2
+            player.commander_taxes[card.name] = player.commander_taxes.get(card.name, 0) + 2
 
         self._log_action("move_card", f"Moved {old_name} from {from_zone} to {to_zone}")
         return {"ok": True}
@@ -453,13 +454,23 @@ class GameEngine:
         return {"ok": True}
 
     def _handle_set_commander_tax(self, action: dict) -> dict:
-        """Manually adjust commander tax."""
+        """Manually adjust commander tax for a specific commander."""
         player_index = action["player_index"]
+        commander_name = action.get("commander_name", "")
         delta = action.get("delta", 0)
         player = self._get_player(player_index)
-        old_val = player.commander_tax
-        player.commander_tax = max(0, old_val + delta)
-        self._log_action("set_commander_tax", f"{player.name}: Commander Tax {old_val} → {player.commander_tax}")
+
+        # If no commander_name given, fall back to first commander tax entry
+        if not commander_name and player.commander_taxes:
+            commander_name = next(iter(player.commander_taxes))
+
+        old_val = player.commander_taxes.get(commander_name, 0)
+        new_val = max(0, old_val + delta)
+        if new_val > 0:
+            player.commander_taxes[commander_name] = new_val
+        else:
+            player.commander_taxes.pop(commander_name, None)
+        self._log_action("set_commander_tax", f"{player.name}: {commander_name} Tax {old_val} → {new_val}")
         return {"ok": True}
 
     def _handle_change_life(self, action: dict) -> dict:
@@ -712,6 +723,7 @@ class GameEngine:
         clone = card.model_copy(deep=True)
         clone.id = clone_id
         clone.is_token = True  # Clones are treated as tokens
+        clone.is_conjured = True  # Deletable (not part of original deck)
         clone.linked_exile_cards = []
         clone.linked_to = None
         self.state.cards[clone_id] = clone
@@ -791,6 +803,13 @@ class GameEngine:
 
         del self.state.cards[card_id]
         self._log_action("delete_card", f"Deleted {name}")
+        return {"ok": True}
+
+    def _handle_set_quantity(self, action: dict) -> dict:
+        """Set visual quantity badge on a card."""
+        card = self._get_card(action["card_id"])
+        new_qty = max(1, action.get("quantity", 1))
+        card.quantity = new_qty
         return {"ok": True}
 
     def _handle_add_counter(self, action: dict) -> dict:
@@ -1185,7 +1204,11 @@ class GameEngine:
         # Create cards from decklists
         for player_idx, pdata in enumerate(players_data):
             decklist = pdata.get("decklist", [])
-            commander_name = pdata.get("commander_name")
+            # Support both commander_names (list) and commander_name (single, backwards compat)
+            commander_names = pdata.get("commander_names", [])
+            if not commander_names and pdata.get("commander_name"):
+                commander_names = [pdata["commander_name"]]
+            commander_names_lower = [n.lower() for n in commander_names]
 
             for card_entry in decklist:
                 count = card_entry.get("count", 1)
@@ -1193,7 +1216,7 @@ class GameEngine:
 
                 for _ in range(count):
                     card_id = str(uuid.uuid4())
-                    is_commander = (card_entry["name"].lower() == commander_name.lower()) if commander_name else False
+                    is_commander = card_entry["name"].lower() in commander_names_lower if commander_names_lower else False
 
                     card = CardState(
                         id=card_id,
@@ -1220,6 +1243,12 @@ class GameEngine:
                         keywords=scryfall_data.get("keywords", []),
                     )
                     self.state.cards[card_id] = card
+
+        # Initialize per-commander tax tracking
+        for player_idx, player in enumerate(self.state.players):
+            for card in self.state.cards.values():
+                if card.is_commander and card.owner_index == player_idx:
+                    player.commander_taxes[card.name] = 0
 
         # Shuffle libraries
         for player_idx in range(len(players_data)):

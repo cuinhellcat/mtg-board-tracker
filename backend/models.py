@@ -3,8 +3,8 @@ Pydantic models for the MTG Duel Commander Board State Tracker.
 Central data structures representing the complete game state.
 """
 
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field, model_validator
 
 
 class CardState(BaseModel):
@@ -54,16 +54,28 @@ class CardState(BaseModel):
     # Related tokens (from Scryfall all_parts)
     related_tokens: List[Dict] = Field(default_factory=list)  # [{name, type_line, scryfall_id, uri}]
     original_characteristics: Optional[Dict] = None  # Saved before "become copy" so it can be reverted
+    quantity: int = 1  # Visual quantity badge (for representing multiple copies with one card element)
 
 
 class PlayerState(BaseModel):
     """Represents a single player's state."""
     name: str
     life: int = 20
-    commander_tax: int = 0
+    commander_taxes: Dict[str, int] = Field(default_factory=dict)  # commander_name → tax amount
     commander_damage_received: Dict[str, int] = Field(default_factory=dict)
     extra_counters: Dict[str, int] = Field(default_factory=dict)  # e.g. {"Poison": 3, "Experience": 7}
     mana_pool: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_commander_tax(cls, data: Any) -> Any:
+        """Migrate old single commander_tax (int) to commander_taxes (dict)."""
+        if isinstance(data, dict):
+            old_tax = data.pop("commander_tax", None)
+            if old_tax and isinstance(old_tax, int) and old_tax > 0:
+                if not data.get("commander_taxes"):
+                    data["commander_taxes"] = {"Commander": old_tax}
+        return data
 
 
 class ActionEntry(BaseModel):

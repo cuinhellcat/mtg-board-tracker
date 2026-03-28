@@ -284,6 +284,9 @@
 
         .saved-deck-row select {
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
             padding: 6px 10px;
             font-size: 13px;
             background: var(--bg-card);
@@ -407,6 +410,12 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    <label>Partner</label>
+                    <div class="commander-row">
+                        <select id="p1-partner"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
                     <label>Save Deck As</label>
                     <div class="save-deck-row">
                         <input type="text" id="p1-save-name" placeholder="Deck name...">
@@ -451,6 +460,12 @@
                     <label>Commander</label>
                     <div class="commander-row">
                         <select id="p2-commander"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Partner</label>
+                    <div class="commander-row">
+                        <select id="p2-partner"><option value="">-- none --</option></select>
                     </div>
                 </div>
                 <div class="form-group">
@@ -623,7 +638,8 @@
                         var val = sel.value;
                         sel.innerHTML = '<option value="">-- select --</option>';
                         decks.forEach(function (d) {
-                            var label = d.name + ' (' + d.card_count + ' cards' + (d.commander ? ', ' + d.commander : '') + ')';
+                            var cmdLabel = d.commander_names && d.commander_names.length ? d.commander_names.join(' + ') : (d.commander || '');
+                            var label = d.name + ' (' + d.card_count + ' cards' + (cmdLabel ? ', ' + cmdLabel : '') + ')';
                             var opt = document.createElement('option');
                             opt.value = d.filename;
                             opt.textContent = label;
@@ -655,8 +671,10 @@
                         if (!data.success) return;
                         var deck = data.deck;
                         document.getElementById('p' + pn + '-deck').value = deck.decklist_text || '';
-                        // Auto-parse after loading
-                        parseDeck(pn, deck.commander_name);
+                        // Auto-parse after loading (supports Partner)
+                        var cmds = deck.commander_names || [];
+                        if (!cmds.length && deck.commander_name) cmds = [deck.commander_name];
+                        parseDeck(pn, cmds);
                     })
                     .catch(function (err) { console.error('Load deck failed:', err); });
             });
@@ -712,7 +730,7 @@
             parseDeck(2);
         });
 
-        function parseDeck(playerNum, presetCommander) {
+        function parseDeck(playerNum, presetCommanders) {
             const deckText = document.getElementById('p' + playerNum + '-deck').value.trim();
             const resultEl = document.getElementById('p' + playerNum + '-result');
 
@@ -736,12 +754,20 @@
                 parseBtn.textContent = 'Parse Deck';
 
                 if (data.success) {
-                    // Use preset commander (from saved deck) or parsed one
-                    var activeCommander = presetCommander || data.commander || null;
+                    // Use preset commanders (from saved deck) or parsed ones
+                    var activeCommanders = presetCommanders || data.commander_names || [];
+                    // Backwards compat: single string
+                    if (!Array.isArray(activeCommanders)) {
+                        activeCommanders = activeCommanders ? [activeCommanders] : [];
+                    }
+                    // Fallback to single commander field
+                    if (!activeCommanders.length && data.commander) {
+                        activeCommanders = [data.commander];
+                    }
 
                     let msg = 'Deck loaded: ' + data.card_count + ' cards';
-                    if (activeCommander) {
-                        msg += ' | Commander: ' + activeCommander;
+                    if (activeCommanders.length) {
+                        msg += ' | Commander: ' + activeCommanders.join(' + ');
                     }
 
                     let warningsHtml = '';
@@ -775,8 +801,8 @@
                         });
                     }
 
-                    // Show post-parse section (commander + save)
-                    showPostParse(playerNum, names, activeCommander);
+                    // Show post-parse section (commander + partner + save)
+                    showPostParse(playerNum, names, activeCommanders);
                 } else {
                     showDeckResult(resultEl, 'error', 'Parse failed: ' + (data.error || 'Unknown error'));
                 }
@@ -793,19 +819,35 @@
         // Post-Parse: Commander Dropdown + Save Deck
         // ================================================================
 
-        function showPostParse(playerNum, cardNames, activeCommander) {
+        function showPostParse(playerNum, cardNames, activeCommanders) {
+            // activeCommanders: array of commander names (supports Partner)
+            if (!Array.isArray(activeCommanders)) {
+                activeCommanders = activeCommanders ? [activeCommanders] : [];
+            }
             var section = document.getElementById('p' + playerNum + '-post-parse');
             var cmdSelect = document.getElementById('p' + playerNum + '-commander');
+            var partnerSelect = document.getElementById('p' + playerNum + '-partner');
+
+            var sorted = cardNames.slice().sort();
 
             // Populate commander dropdown
             cmdSelect.innerHTML = '<option value="">-- none --</option>';
-            var sorted = cardNames.slice().sort();
             sorted.forEach(function (name) {
                 var opt = document.createElement('option');
                 opt.value = name;
                 opt.textContent = name;
-                if (activeCommander && name === activeCommander) opt.selected = true;
+                if (activeCommanders[0] && name === activeCommanders[0]) opt.selected = true;
                 cmdSelect.appendChild(opt);
+            });
+
+            // Populate partner dropdown
+            partnerSelect.innerHTML = '<option value="">-- none --</option>';
+            sorted.forEach(function (name) {
+                var opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                if (activeCommanders[1] && name === activeCommanders[1]) opt.selected = true;
+                partnerSelect.appendChild(opt);
             });
 
             section.classList.add('visible');
@@ -820,7 +862,10 @@
 
                 var deckText = document.getElementById('p' + pn + '-deck').value.trim();
                 var cmdSelect = document.getElementById('p' + pn + '-commander');
-                var commanderName = cmdSelect.value || null;
+                var partnerSelect = document.getElementById('p' + pn + '-partner');
+                var commanderNames = [];
+                if (cmdSelect.value) commanderNames.push(cmdSelect.value);
+                if (partnerSelect.value) commanderNames.push(partnerSelect.value);
                 var deckData = pn === 1 ? deck1Data : deck2Data;
                 var cardCount = deckData ? deckData.card_count : 0;
 
@@ -830,7 +875,7 @@
                     body: JSON.stringify({
                         name: deckName,
                         decklist_text: deckText,
-                        commander_name: commanderName,
+                        commander_names: commanderNames,
                         card_count: cardCount
                     })
                 })
@@ -930,9 +975,15 @@
             const firstPlayerRadio = document.querySelector('input[name="first-player"]:checked');
             const firstPlayer = firstPlayerRadio ? parseInt(firstPlayerRadio.value) : 0;
 
-            // Get commander selections from dropdowns
-            var p1Commander = document.getElementById('p1-commander').value || null;
-            var p2Commander = document.getElementById('p2-commander').value || null;
+            // Get commander selections from dropdowns (supports Partner)
+            function getCommanderNames(playerNum) {
+                var names = [];
+                var cmd = document.getElementById('p' + playerNum + '-commander').value;
+                var partner = document.getElementById('p' + playerNum + '-partner').value;
+                if (cmd) names.push(cmd);
+                if (partner) names.push(partner);
+                return names;
+            }
 
             // Send already-parsed card data instead of raw text to avoid re-parsing
             const payload = {
@@ -940,12 +991,12 @@
                     {
                         name: p1NameInput.value || 'Player 1',
                         decklist: deck1Data && deck1Data.data ? deck1Data.data.main : document.getElementById('p1-deck').value.trim(),
-                        commander_name: p1Commander
+                        commander_names: getCommanderNames(1)
                     },
                     {
                         name: p2NameInput.value || 'Player 2',
                         decklist: deck2Data && deck2Data.data ? deck2Data.data.main : document.getElementById('p2-deck').value.trim(),
-                        commander_name: p2Commander
+                        commander_names: getCommanderNames(2)
                     }
                 ],
                 starting_life: parseInt(document.getElementById('starting-life').value) || 20,

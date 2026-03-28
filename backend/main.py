@@ -231,23 +231,30 @@ async def api_new_game(request: Request):
         if isinstance(decklist_field, str) and decklist_field.strip():
             parsed = parse_decklist(decklist_field)
             deck_cards = parsed.get("main", [])
-            commander = parsed.get("commander")
-            commander_name = commander["name"] if commander else None
-            # Merge commander into deck list if present
-            if commander and commander not in deck_cards:
-                deck_cards.append(commander)
+            # Merge commanders into deck list if present
+            commanders = parsed.get("commanders", [])
+            for cmd in commanders:
+                if cmd not in deck_cards:
+                    deck_cards.append(cmd)
+            commander_names = [c["name"] for c in commanders] if commanders else []
         elif isinstance(decklist_field, list):
             # Already parsed format
             deck_cards = decklist_field
-            commander_name = praw.get("commander_name")
+            commander_names = praw.get("commander_names", [])
+            # Backwards compat: single commander_name
+            if not commander_names and praw.get("commander_name"):
+                commander_names = [praw["commander_name"]]
         else:
             deck_cards = []
-            commander_name = None
+            commander_names = []
 
         # Allow frontend to override commander selection
-        override_commander = praw.get("commander_name")
-        if override_commander:
-            commander_name = override_commander
+        override_names = praw.get("commander_names", [])
+        # Backwards compat: single commander_name override
+        if not override_names and praw.get("commander_name"):
+            override_names = [praw["commander_name"]]
+        if override_names:
+            commander_names = [n for n in override_names if n]
 
         # Apply printing preferences and auto-swap crossover art
         crossover_checked = set()  # Only hit Scryfall API once per unique name
@@ -291,7 +298,7 @@ async def api_new_game(request: Request):
         players_data.append({
             "name": name,
             "decklist": deck_cards,
-            "commander_name": commander_name,
+            "commander_names": commander_names,
         })
 
     result = engine.dispatch({
@@ -347,15 +354,18 @@ async def api_parse_deck(request: Request):
 
     result = parse_decklist(text)
     card_count = sum(c.get("count", 1) for c in result.get("main", []))
-    commander = result.get("commander")
+    commanders = result.get("commanders", [])
 
     # Collect card names for commander dropdown
     card_names = [c["name"] for c in result.get("main", []) if c.get("found")]
 
+    commander_names = [c["name"] for c in commanders]
+
     return JSONResponse({
         "success": True,
-        "card_count": card_count + (1 if commander else 0),
-        "commander": commander["name"] if commander else None,
+        "card_count": card_count + len(commanders),
+        "commander": commander_names[0] if commander_names else None,  # backwards compat
+        "commander_names": commander_names,
         "card_names": card_names,
         "warnings": result.get("warnings", []),
         "data": result,
@@ -382,13 +392,16 @@ async def api_save_deck(request: Request):
 
     name = body.get("name", "").strip()
     decklist_text = body.get("decklist_text", "").strip()
-    commander_name = body.get("commander_name")
+    commander_names = body.get("commander_names", [])
+    # Backwards compat: single commander_name
+    if not commander_names and body.get("commander_name"):
+        commander_names = [body["commander_name"]]
     card_count = body.get("card_count", 0)
 
     if not name or not decklist_text:
         return JSONResponse({"success": False, "error": "Name and decklist required"}, status_code=400)
 
-    result = save_deck(name, decklist_text, commander_name, card_count)
+    result = save_deck(name, decklist_text, commander_names, card_count)
     return JSONResponse({"success": True, "filename": result["filename"]})
 
 

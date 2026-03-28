@@ -285,6 +285,10 @@
                   .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
+    function escapeAttr(str) {
+        return escapeHtml(str);
+    }
+
     /** Get cards from state filtered by zone and player index. */
     function getCardsInZone(state, zone, playerIndex) {
         var cards = [];
@@ -450,7 +454,14 @@
                 (attachedData.length + linkedExileData.length) + '</div>';
         }
 
-        el.innerHTML = tokenBadge + transformBadge +
+        // Quantity badge (only shown when > 1)
+        var quantityBadge = '';
+        if (card.quantity > 1) {
+            quantityBadge = '<span class="quantity-badge" data-card-id="' + card.id +
+                '" title="Left-click: +1 / Right-click: -1">×' + card.quantity + '</span>';
+        }
+
+        el.innerHTML = tokenBadge + transformBadge + quantityBadge +
             '<div class="card-header">' +
                 '<div class="card-name">' + escapeHtml(displayName) + '</div>' +
                 '<div class="card-mana">' + renderManaCost(displayMana) + '</div>' +
@@ -533,6 +544,22 @@
                     e.stopPropagation();
                     var cur = parseInt(card.loyalty, 10) || 0;
                     MTGSocket.send({ action: 'set_loyalty', card_id: card.id, loyalty: cur - 1 });
+                });
+            }
+        }
+
+        // Quantity badge: left-click +1, right-click -1
+        if (card.quantity > 1) {
+            var qtyBadge = el.querySelector('.quantity-badge');
+            if (qtyBadge) {
+                qtyBadge.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    MTGSocket.send({ action: 'set_quantity', card_id: card.id, quantity: card.quantity + 1 });
+                });
+                qtyBadge.addEventListener('contextmenu', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    MTGSocket.send({ action: 'set_quantity', card_id: card.id, quantity: card.quantity - 1 });
                 });
             }
         }
@@ -978,18 +1005,23 @@
 
         row.innerHTML = '';
 
-        // Commander Tax pill (always shown if > 0)
-        var tax = player.commander_tax || 0;
-        if (tax > 0) {
+        // Commander Tax pills (one per commander, shown if > 0)
+        var taxes = player.commander_taxes || {};
+        var taxNames = Object.keys(taxes);
+        taxNames.forEach(function(cmdName) {
+            var tax = taxes[cmdName];
+            if (tax <= 0) return;
+            // Short label: use just "Tax" for single commander, commander name for partners
+            var label = taxNames.length > 1 ? escapeHtml(cmdName) : 'Tax';
             var taxPill = document.createElement('span');
             taxPill.className = 'extra-counter-pill cmdr-tax-pill';
             taxPill.innerHTML =
-                '<span class="extra-counter-btn cmdr-tax-btn" data-player="' + playerIndex + '" data-delta="-2">−</span>' +
-                '<span class="extra-counter-name">Tax</span>' +
+                '<span class="extra-counter-btn cmdr-tax-btn" data-player="' + playerIndex + '" data-commander="' + escapeAttr(cmdName) + '" data-delta="-2">−</span>' +
+                '<span class="extra-counter-name">' + label + '</span>' +
                 '<span class="extra-counter-val">' + tax + '</span>' +
-                '<span class="extra-counter-btn cmdr-tax-btn" data-player="' + playerIndex + '" data-delta="2">+</span>';
+                '<span class="extra-counter-btn cmdr-tax-btn" data-player="' + playerIndex + '" data-commander="' + escapeAttr(cmdName) + '" data-delta="2">+</span>';
             row.appendChild(taxPill);
-        }
+        });
 
         var counters = player.extra_counters || {};
         for (var name in counters) {
@@ -1024,6 +1056,7 @@
                 MTGSocket.send({
                     action: 'set_commander_tax',
                     player_index: parseInt(this.dataset.player, 10),
+                    commander_name: this.dataset.commander,
                     delta: parseInt(this.dataset.delta, 10)
                 });
             });
@@ -1174,9 +1207,14 @@
             summSickItem.textContent = card.summoning_sick ? '💫 Summoning Sickness ✓' : '💫 Summoning Sickness';
         }
 
+        var qtyItem = menu.querySelector('[data-action="set_quantity"]');
+        if (qtyItem) {
+            qtyItem.textContent = card.quantity > 1 ? 'Remove Quantity Badge' : 'Set Quantity (×2, ×3...)';
+        }
+
         var deleteItem = menu.querySelector('[data-action="delete_card"]');
         if (deleteItem) {
-            deleteItem.style.display = card.is_conjured ? 'block' : 'none';
+            deleteItem.style.display = (card.is_conjured || card.is_token) ? 'block' : 'none';
         }
 
         var removePtItem = menu.querySelector('[data-action="remove_pt_badge"]');
@@ -1340,6 +1378,14 @@
                     power: null,
                     toughness: null
                 });
+                break;
+
+            case 'set_quantity':
+                // Start with 2 (user activates because they have more than 1)
+                var currentCard = currentState && currentState.cards ? currentState.cards[cardId] : null;
+                var currentQty = (currentCard && currentCard.quantity > 1) ? currentCard.quantity : 1;
+                var newQty = currentQty > 1 ? 1 : 2;  // Toggle: if already has quantity, reset to 1 (remove badge)
+                MTGSocket.send({ action: 'set_quantity', card_id: cardId, quantity: newQty });
                 break;
 
             case 'create_token':

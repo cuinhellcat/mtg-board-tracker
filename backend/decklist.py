@@ -1,6 +1,7 @@
 """
 Parser for decklist text files.
 Supports standard MTG decklist format with commander designation.
+Supports Partner commanders (multiple Commander: lines).
 """
 
 import re
@@ -23,14 +24,15 @@ def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
     Returns:
     {
         "main": [{"name": "Sol Ring", "count": 1, "found": True, "scryfall_data": {...}}, ...],
-        "commander": {"name": "...", "found": True, "scryfall_data": {...}} or None,
+        "commanders": [{"name": "...", "found": True, "scryfall_data": {...}}, ...],
+        "commander": {"name": "...", ...} or None,  (first commander, for backwards compat)
         "sideboard": [...],
         "warnings": ["Card 'Xyz' not found in Scryfall cache"]
     }
     """
     main: List[Dict[str, Any]] = []
     sideboard: List[Dict[str, Any]] = []
-    commander: Optional[Dict[str, Any]] = None
+    commanders: List[Dict[str, Any]] = []
     warnings: List[str] = []
 
     current_section = "main"  # "main" or "sideboard"
@@ -49,17 +51,17 @@ def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
             current_section = "sideboard"
             continue
 
-        # Check for commander designation
+        # Check for commander designation (supports Partner: multiple Commander: lines)
         commander_match = re.match(r"^(?:COMMANDER|Commander|commander)\s*:\s*(.+)$", line)
         if commander_match:
             commander_name = commander_match.group(1).strip()
             card_data = _lookup_card(commander_name, scryfall_cache)
-            commander = {
+            commanders.append({
                 "name": card_data["name"],
                 "count": 1,
                 "found": card_data["found"],
                 "scryfall_data": card_data["scryfall_data"],
-            }
+            })
             if not card_data["found"]:
                 warnings.append(f"Card '{commander_name}' not found in Scryfall cache")
             continue
@@ -99,7 +101,8 @@ def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
 
     return {
         "main": main,
-        "commander": commander,
+        "commanders": commanders,
+        "commander": commanders[0] if commanders else None,  # backwards compat
         "sideboard": sideboard,
         "warnings": warnings,
     }

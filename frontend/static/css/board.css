@@ -676,6 +676,34 @@ button {
     line-height: 1;
 }
 
+/* Quantity badge — semi-transparent, top-right overlay */
+.quantity-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    min-width: 22px;
+    height: 20px;
+    background: rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0 var(--radius-sm) 0 6px;
+    z-index: 3;
+    padding: 0 5px;
+    cursor: pointer;
+    user-select: none;
+    pointer-events: auto;
+    backdrop-filter: blur(2px);
+}
+
+.quantity-badge:hover {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+}
+
 /* Transform badge */
 .card-badge-transform {
     position: absolute;

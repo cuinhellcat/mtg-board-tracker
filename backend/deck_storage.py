@@ -20,16 +20,21 @@ def _sanitize_filename(name: str) -> str:
 
 
 def list_decks() -> List[Dict[str, Any]]:
-    """Return list of saved decks (name + commander + card_count)."""
+    """Return list of saved decks (name + commander(s) + card_count)."""
     DECKS_DIR.mkdir(parents=True, exist_ok=True)
     decks = []
     for f in sorted(DECKS_DIR.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
+            # Backwards compat: old decks have commander_name (string), new ones have commander_names (list)
+            commander_names = data.get("commander_names", [])
+            if not commander_names and data.get("commander_name"):
+                commander_names = [data["commander_name"]]
             decks.append({
                 "filename": f.stem,
                 "name": data.get("name", f.stem),
-                "commander": data.get("commander_name", None),
+                "commander": commander_names[0] if commander_names else None,
+                "commander_names": commander_names,
                 "card_count": data.get("card_count", 0),
             })
         except Exception:
@@ -37,15 +42,20 @@ def list_decks() -> List[Dict[str, Any]]:
     return decks
 
 
-def save_deck(name: str, decklist_text: str, commander_name: Optional[str], card_count: int) -> Dict[str, Any]:
+def save_deck(name: str, decklist_text: str, commander_names: List[str],
+              card_count: int, commander_name: Optional[str] = None) -> Dict[str, Any]:
     """Save a deck to disk. Returns {ok, filename}."""
     DECKS_DIR.mkdir(parents=True, exist_ok=True)
+    # Backwards compat: accept old single commander_name param
+    if not commander_names and commander_name:
+        commander_names = [commander_name]
     filename = _sanitize_filename(name)
     path = DECKS_DIR / f"{filename}.json"
     data = {
         "name": name,
         "decklist_text": decklist_text,
-        "commander_name": commander_name,
+        "commander_names": commander_names,
+        "commander_name": commander_names[0] if commander_names else None,  # backwards compat
         "card_count": card_count,
     }
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
