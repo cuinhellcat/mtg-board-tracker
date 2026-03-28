@@ -247,7 +247,8 @@ def _format_card_full(card: CardState) -> str:
     """
     Format a card with full detail: Name {ManaCost} [TypeLine] (counters) -- OracleText -- TAPPED
     """
-    parts = [card.name]
+    prefix = f"{card.quantity}x " if card.quantity > 1 else ""
+    parts = [prefix + card.name]
 
     if card.mana_cost:
         parts.append(card.mana_cost)
@@ -299,7 +300,8 @@ def _format_card_full(card: CardState) -> str:
 
 def _format_card_brief(card: CardState) -> str:
     """Format a card briefly: Name {ManaCost} [TypeLine]. Includes oracle text if show_oracle_text is enabled."""
-    parts = [card.name]
+    prefix = f"{card.quantity}x " if card.quantity > 1 else ""
+    parts = [prefix + card.name]
 
     if card.mana_cost:
         parts.append(card.mana_cost)
