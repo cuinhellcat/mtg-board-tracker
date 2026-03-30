@@ -42,6 +42,12 @@
     /** @type {string|null} Card ID that will become a copy. */
     var copyCardId = null;
 
+    /** @type {boolean} Whether we are in "create arrow" mode waiting for a click. */
+    var arrowMode = false;
+
+    /** @type {string|null} Source card ID for arrow creation. */
+    var arrowSourceCardId = null;
+
     /** @type {string|null} Card ID selected in search modal. */
     var searchSelectedCardId = null;
 
@@ -586,6 +592,12 @@
                 return;
             }
 
+            // If in arrow mode, handle differently
+            if (arrowMode) {
+                handleArrowTarget(card.id);
+                return;
+            }
+
             // Tap/untap only on battlefield
             if (card.zone === 'battlefield') {
                 MTGSocket.send({ action: 'tap_toggle', card_id: card.id });
@@ -728,6 +740,7 @@
         _renderRafId = requestAnimationFrame(function () {
             _renderRafId = null;
             renderBoard();
+            updateArrows();
         });
     }
 
@@ -1182,6 +1195,20 @@
             attachItem.style.display = (card.zone === 'battlefield') ? 'block' : 'none';
         }
 
+        // Arrow: only show for battlefield cards
+        var arrowItem = menu.querySelector('[data-action="create_arrow"]');
+        if (arrowItem) {
+            arrowItem.style.display = (card.zone === 'battlefield') ? 'block' : 'none';
+        }
+        // Manage Arrows: only show if this card has outgoing arrows
+        var manageArrowsItem = menu.querySelector('[data-action="manage_arrows"]');
+        if (manageArrowsItem) {
+            var hasArrows = currentState && currentState.arrows && currentState.arrows.some(function (a) {
+                return a.source_card_id === card.id;
+            });
+            manageArrowsItem.style.display = hasArrows ? 'block' : 'none';
+        }
+
         // Oracle text toggle: show checkmark when enabled
         var oracleItem = menu.querySelector('[data-action="toggle_oracle_text"]');
         if (oracleItem) {
@@ -1462,6 +1489,14 @@
                 MTGSocket.send({ action: 'detach_card', card_id: cardId });
                 break;
 
+            case 'create_arrow':
+                startArrowMode(cardId);
+                break;
+
+            case 'manage_arrows':
+                openArrowModal(cardId);
+                break;
+
             case 'toggle_summoning_sick':
                 MTGSocket.send({ action: 'toggle_summoning_sick', card_id: cardId });
                 break;
@@ -1570,6 +1605,32 @@
                 });
             }
         }, { showTokenToggle: true, defaultTokenMode: true });
+    }
+
+    function handleCustomToken(playerIndex) {
+        var pi = playerIndex !== undefined ? playerIndex : 1;
+        var name = prompt('Token Name:');
+        if (!name || !name.trim()) return;
+        var pt = prompt('Power/Toughness (z.B. 2/2, leer für Nicht-Kreatur):');
+        var power = null, toughness = null;
+        var defaultType = 'Token — ' + name.trim();
+        if (pt && pt.trim()) {
+            var parts = pt.split('/');
+            power = (parts[0] || '0').trim();
+            toughness = (parts[1] || '0').trim();
+            defaultType = 'Token Creature — ' + name.trim();
+        }
+        var typeLine = prompt('Type line:', defaultType) || defaultType;
+        var abilities = prompt('Abilities (optional):') || '';
+        MTGSocket.send({
+            action: 'create_token',
+            player_index: pi,
+            name: name.trim(),
+            power: power,
+            toughness: toughness,
+            type_line: typeLine.trim(),
+            abilities: abilities.trim()
+        });
     }
 
     /* ==================================================================
@@ -1707,8 +1768,8 @@
         hideAllContextMenus();
 
         switch (actionType) {
-            case 'bf_create_token':
-                handleCreateToken(pi);
+            case 'bf_custom_token':
+                handleCustomToken(pi);
                 break;
 
             case 'bf_add_card_battlefield':
@@ -1819,6 +1880,292 @@
             target_card_id: targetCardId
         });
         cancelCopyMode();
+    }
+
+    /* ==================================================================
+       ARROW MODE
+       ================================================================== */
+
+    function startArrowMode(cardId) {
+        arrowMode = true;
+        arrowSourceCardId = cardId;
+        document.getElementById('arrow-prompt').style.display = 'flex';
+    }
+
+    function cancelArrowMode() {
+        arrowMode = false;
+        arrowSourceCardId = null;
+        document.getElementById('arrow-prompt').style.display = 'none';
+    }
+
+    function handleArrowTarget(targetCardId) {
+        if (!arrowSourceCardId) return;
+        MTGSocket.send({
+            action: 'create_arrow',
+            source_card_id: arrowSourceCardId,
+            target_card_id: targetCardId
+        });
+        cancelArrowMode();
+    }
+
+    /* ==================================================================
+       ARROW SVG RENDERING
+       ================================================================== */
+
+    function updateArrows() {
+        if (!currentState || !currentState.arrows) return;
+        // Remove old SVG overlays
+        document.querySelectorAll('.arrow-svg-overlay').forEach(function (el) { el.remove(); });
+
+        var arrows = currentState.arrows;
+        if (!arrows.length) return;
+
+        // Count arrows per source card for arc offset calculation
+        var sourceArrowIndex = {};
+        arrows.forEach(function (arrow) {
+            if (!sourceArrowIndex[arrow.source_card_id]) sourceArrowIndex[arrow.source_card_id] = 0;
+        });
+
+        arrows.forEach(function (arrow) {
+            var sourceEl = document.querySelector('.card[data-card-id="' + arrow.source_card_id + '"]');
+            var targetEl = document.querySelector('.card[data-card-id="' + arrow.target_card_id + '"]');
+            if (!sourceEl || !targetEl) return;
+
+            // Find common ancestor battlefield zone
+            var sourceZone = sourceEl.closest('.zone-battlefield');
+            var targetZone = targetEl.closest('.zone-battlefield');
+            if (!sourceZone || !targetZone) return;
+
+            // Use the board container as the SVG parent for cross-zone arrows
+            var container = sourceZone === targetZone ? sourceZone : document.getElementById('board-container');
+            if (!container) container = document.body;
+
+            var svg = container.querySelector('.arrow-svg-overlay');
+            if (!svg) {
+                svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('class', 'arrow-svg-overlay');
+                svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:50;overflow:visible;';
+                container.style.position = container.style.position || 'relative';
+                container.appendChild(svg);
+            }
+
+            // Ensure defs with arrowhead markers exist
+            if (!svg.querySelector('defs')) {
+                var defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                var marker1 = createArrowMarker('arrowhead-white', 'rgba(255,255,255,0.7)');
+                var marker2 = createArrowMarker('arrowhead-green', 'rgba(100,220,100,0.85)');
+                defs.appendChild(marker1);
+                defs.appendChild(marker2);
+                svg.appendChild(defs);
+            }
+
+            var containerRect = container.getBoundingClientRect();
+            var srcRect = sourceEl.getBoundingClientRect();
+            var tgtRect = targetEl.getBoundingClientRect();
+
+            var x1 = srcRect.left + srcRect.width / 2 - containerRect.left;
+            var y1 = srcRect.top + srcRect.height / 2 - containerRect.top;
+            var x2 = tgtRect.left + tgtRect.width / 2 - containerRect.left;
+            var y2 = tgtRect.top + tgtRect.height / 2 - containerRect.top;
+
+            // Arc offset: increases per arrow from the same source
+            var idx = sourceArrowIndex[arrow.source_card_id]++;
+            var arcBase = 40 + idx * 25;
+
+            // Control point perpendicular to the midpoint
+            var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+            var dx = x2 - x1, dy = y2 - y1;
+            var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            // Arc strength scales with distance but has a minimum
+            var arcStrength = Math.max(arcBase, dist * 0.2 + idx * 20);
+            // Perpendicular direction (always curve upward/left)
+            var cx = mx + (-dy / dist) * arcStrength;
+            var cy = my + (dx / dist) * arcStrength;
+
+            var hasBuff = arrow.buff_power != null || arrow.buff_toughness != null;
+            var color = hasBuff ? 'rgba(100,220,100,0.85)' : 'rgba(255,255,255,0.7)';
+            var markerUrl = hasBuff ? 'url(#arrowhead-green)' : 'url(#arrowhead-white)';
+
+            var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', 'M' + x1 + ',' + y1 + ' Q' + cx + ',' + cy + ' ' + x2 + ',' + y2);
+            path.setAttribute('stroke', color);
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke-dasharray', hasBuff ? 'none' : '6,3');
+            path.setAttribute('marker-end', markerUrl);
+            svg.appendChild(path);
+
+            // Label for buff — placed at the curve apex (control point area)
+            if (hasBuff) {
+                // Point on quadratic bezier at t=0.5: B = 0.25*P0 + 0.5*CP + 0.25*P2
+                var labelX = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
+                var labelY = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
+
+                var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', labelX);
+                text.setAttribute('y', labelY);
+                text.setAttribute('fill', color);
+                text.setAttribute('font-size', '11');
+                text.setAttribute('font-weight', 'bold');
+                text.setAttribute('text-anchor', 'middle');
+                text.setAttribute('dominant-baseline', 'middle');
+                text.textContent = '+' + (arrow.buff_power || 0) + '/+' + (arrow.buff_toughness || 0);
+                svg.appendChild(text);
+            }
+        });
+    }
+
+    function createArrowMarker(id, color) {
+        var marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+        marker.setAttribute('id', id);
+        marker.setAttribute('markerWidth', '8');
+        marker.setAttribute('markerHeight', '6');
+        marker.setAttribute('refX', '8');
+        marker.setAttribute('refY', '3');
+        marker.setAttribute('orient', 'auto');
+        marker.setAttribute('markerUnits', 'strokeWidth');
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M0,0 L8,3 L0,6 Z');
+        path.setAttribute('fill', color);
+        marker.appendChild(path);
+        return marker;
+    }
+
+    /* ==================================================================
+       ARROW MANAGEMENT MODAL
+       ================================================================== */
+
+    function openArrowModal(cardId) {
+        if (!currentState || !currentState.arrows) return;
+        var arrows = currentState.arrows.filter(function (a) {
+            return a.source_card_id === cardId;
+        });
+        if (!arrows.length) {
+            alert('No arrows from this card.');
+            return;
+        }
+
+        var listEl = document.getElementById('arrow-modal-list');
+        listEl.innerHTML = '';
+
+        arrows.forEach(function (arrow) {
+            var targetCard = currentState.cards[arrow.target_card_id];
+            var targetName = targetCard ? targetCard.name : '(unknown)';
+            // Active buff from server (null = no buff yet)
+            var hasActiveBuff = arrow.buff_power != null;
+            var curP = hasActiveBuff ? arrow.buff_power : 1;
+            var curT = hasActiveBuff ? arrow.buff_toughness : 1;
+            // Track whether user has confirmed the buff
+            var buffConfirmed = hasActiveBuff;
+
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;padding:6px;background:rgba(255,255,255,0.05);border-radius:4px;';
+
+            var nameSpan = document.createElement('span');
+            nameSpan.textContent = '→ ' + targetName;
+            nameSpan.style.cssText = 'flex:1;color:#ddd;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            row.appendChild(nameSpan);
+
+            // Buff display
+            var buffDisplay = document.createElement('span');
+            buffDisplay.style.cssText = 'font-weight:bold; min-width:60px; text-align:center; cursor:pointer;';
+            buffDisplay.title = 'Click to type custom value';
+
+            function updateDisplay() {
+                if (buffConfirmed && curP === 0 && curT === 0) {
+                    buffDisplay.textContent = 'no buff';
+                    buffDisplay.style.color = '#888';
+                } else if (!buffConfirmed) {
+                    buffDisplay.textContent = '+' + curP + '/+' + curT;
+                    buffDisplay.style.color = '#886';  // dim/pending color
+                } else {
+                    buffDisplay.textContent = '+' + curP + '/+' + curT;
+                    buffDisplay.style.color = '#6dc';
+                }
+                setBtn.style.display = buffConfirmed ? 'none' : '';
+            }
+
+            // Click on display to manually enter value
+            buffDisplay.addEventListener('click', function () {
+                var val = prompt('Buff (z.B. +2/+2 oder 3):', '+' + curP + '/+' + curT);
+                if (val === null) return;
+                val = val.trim().replace(/\+/g, '');
+                if (!val || val === '0' || val === '0/0') {
+                    curP = 0; curT = 0;
+                } else {
+                    var parts = val.split('/');
+                    curP = parseInt(parts[0]) || 0;
+                    curT = parts.length > 1 ? (parseInt(parts[1]) || 0) : curP;
+                }
+                buffConfirmed = true;
+                updateDisplay();
+                sendBuff();
+            });
+            row.appendChild(buffDisplay);
+
+            function sendBuff() {
+                if (curP === 0 && curT === 0) {
+                    MTGSocket.send({ action: 'update_arrow_buff', arrow_id: arrow.id, buff_power: null, buff_toughness: null });
+                } else {
+                    MTGSocket.send({ action: 'update_arrow_buff', arrow_id: arrow.id, buff_power: curP, buff_toughness: curT });
+                }
+            }
+
+            // "Set" button — confirms the pending default, hidden once confirmed
+            var setBtn = document.createElement('button');
+            setBtn.className = 'btn btn-sm';
+            setBtn.textContent = 'Set';
+            setBtn.style.cssText = 'padding:2px 8px;';
+            setBtn.addEventListener('click', function () {
+                buffConfirmed = true;
+                updateDisplay();
+                sendBuff();
+            });
+            row.appendChild(setBtn);
+
+            // − button
+            var minusBtn = document.createElement('button');
+            minusBtn.className = 'btn btn-sm';
+            minusBtn.textContent = '−';
+            minusBtn.style.cssText = 'padding:2px 10px;font-size:14px;font-weight:bold;';
+            minusBtn.addEventListener('click', function () {
+                curP--; curT--;
+                buffConfirmed = true;
+                updateDisplay();
+                sendBuff();
+            });
+            row.appendChild(minusBtn);
+
+            // + button
+            var plusBtn = document.createElement('button');
+            plusBtn.className = 'btn btn-sm';
+            plusBtn.textContent = '+';
+            plusBtn.style.cssText = 'padding:2px 10px;font-size:14px;font-weight:bold;';
+            plusBtn.addEventListener('click', function () {
+                curP++; curT++;
+                buffConfirmed = true;
+                updateDisplay();
+                sendBuff();
+            });
+            row.appendChild(plusBtn);
+
+            // Delete button
+            var delBtn = document.createElement('button');
+            delBtn.className = 'btn btn-sm btn-danger';
+            delBtn.textContent = '✕';
+            delBtn.style.cssText = 'padding:2px 8px;margin-left:4px;';
+            delBtn.addEventListener('click', function () {
+                MTGSocket.send({ action: 'remove_arrow', arrow_id: arrow.id });
+                row.remove();
+            });
+            row.appendChild(delBtn);
+
+            updateDisplay();
+
+            listEl.appendChild(row);
+        });
+
+        document.getElementById('arrow-modal-overlay').style.display = 'flex';
     }
 
     /* ==================================================================
@@ -2622,6 +2969,11 @@
             if (copyMode && !e.target.closest('.card')) {
                 cancelCopyMode();
             }
+
+            // Cancel arrow mode on click that is not on a card
+            if (arrowMode && !e.target.closest('.card')) {
+                cancelArrowMode();
+            }
         });
 
         // Card context menu actions
@@ -2664,6 +3016,17 @@
         document.getElementById('copy-card-cancel').addEventListener('click', function (e) {
             e.stopPropagation();
             cancelCopyMode();
+        });
+
+        // Arrow cancel
+        document.getElementById('arrow-cancel').addEventListener('click', function (e) {
+            e.stopPropagation();
+            cancelArrowMode();
+        });
+
+        // Arrow modal close
+        document.getElementById('arrow-modal-close').addEventListener('click', function () {
+            document.getElementById('arrow-modal-overlay').style.display = 'none';
         });
 
         // Stack resolve button

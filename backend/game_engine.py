@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.models import ActionEntry, CardState, ChatMessage, GameState, PlayerState
+from backend.models import ActionEntry, Arrow, CardState, ChatMessage, GameState, PlayerState
 from backend.scryfall import get_card_by_name as scryfall_lookup
 
 BASE_DIR = Path(__file__).parent.parent
@@ -278,6 +278,9 @@ class GameEngine:
             "transform_card": self._handle_transform_card,
             "mill": self._handle_mill,
             "set_quantity": self._handle_set_quantity,
+            "create_arrow": self._handle_create_arrow,
+            "remove_arrow": self._handle_remove_arrow,
+            "update_arrow_buff": self._handle_update_arrow_buff,
         }
 
         handler = handler_map.get(action_type)
@@ -305,6 +308,7 @@ class GameEngine:
 
     def _move_to_zone(self, card: CardState, zone: str):
         """Set a card's zone and update the zone_moved_at counter for ordering."""
+        old_zone = card.zone
         self.state.zone_move_counter += 1
         card.zone = zone
         card.zone_moved_at = self.state.zone_move_counter
@@ -315,6 +319,9 @@ class GameEngine:
             card.summoning_sick = is_creature and not has_haste
         else:
             card.summoning_sick = False
+        # Arrow cleanup: remove arrows when card leaves battlefield
+        if old_zone == "battlefield" and zone != "battlefield":
+            self._remove_arrows_for_card(card.id)
 
     def _get_card(self, card_id: str) -> CardState:
         card = self.state.cards.get(card_id)
@@ -640,6 +647,10 @@ class GameEngine:
             large_image_uri=action.get("large_image_uri") or None,
         )
         self.state.cards[token_id] = token
+        # Summoning sickness for creature tokens (unless haste)
+        is_creature = "Creature" in (type_line or "")
+        has_haste = "Haste" in (token.keywords or [])
+        token.summoning_sick = is_creature and not has_haste
         self._log_action("create_token", f"{player.name} created a {name} token")
         return {"ok": True, "card_id": token_id}
 
@@ -801,6 +812,7 @@ class GameEngine:
                 self._move_to_zone(linked, "exile")
                 linked.linked_to = None
 
+        self._remove_arrows_for_card(card_id)
         del self.state.cards[card_id]
         self._log_action("delete_card", f"Deleted {name}")
         return {"ok": True}
@@ -836,7 +848,7 @@ class GameEngine:
         return {"ok": True}
 
     def _update_custom_pt_from_counters(self, card: CardState) -> None:
-        """Auto-update custom P/T badge based on +1/+1 and -1/-1 counters."""
+        """Auto-update custom P/T badge based on +1/+1, -1/-1 counters AND arrow buffs."""
         if card.power is None or card.toughness is None:
             return
         try:
@@ -846,15 +858,20 @@ class GameEngine:
             return  # Non-numeric P/T (e.g. "*/*") — skip
         plus = card.counters.get("+1/+1", 0)
         minus = card.counters.get("-1/-1", 0)
-        delta = plus - minus
-        if delta == 0 and not card.counters.get("+1/+1") and not card.counters.get("-1/-1"):
-            # No +1/+1 or -1/-1 counters — remove auto P/T badge
+        counter_delta = plus - minus
+        # Sum arrow buffs targeting this card
+        arrow_p = sum(a.buff_power for a in self.state.arrows if a.target_card_id == card.id and a.buff_power)
+        arrow_t = sum(a.buff_toughness for a in self.state.arrows if a.target_card_id == card.id and a.buff_toughness)
+        total_p = counter_delta + arrow_p
+        total_t = counter_delta + arrow_t
+        if total_p == 0 and total_t == 0 and not card.counters.get("+1/+1") and not card.counters.get("-1/-1"):
+            # No modifiers — remove auto P/T badge
             if card.custom_power is not None:
                 card.custom_power = None
                 card.custom_toughness = None
             return
-        card.custom_power = base_p + delta
-        card.custom_toughness = base_t + delta
+        card.custom_power = base_p + total_p
+        card.custom_toughness = base_t + total_t
 
     def _handle_link_exile(self, action: dict) -> dict:
         card_id = action["card_id"]
@@ -970,6 +987,10 @@ class GameEngine:
             is_conjured=True,
         )
         self.state.cards[card_id] = card
+        # Summoning sickness for creature tokens (unless haste)
+        is_creature = "Creature" in (card.type_line or "")
+        has_haste = "Haste" in (card.keywords or [])
+        card.summoning_sick = is_creature and not has_haste
         source_name = source_card.name if source_card else "manual"
         self._log_action("create_related_token", f"{player.name} created {card.name} token (from {source_name})")
         return {"ok": True, "card_id": card_id}
@@ -1381,3 +1402,75 @@ class GameEngine:
         if updated:
             self._log_action("set_card_printing", f"Changed printing of {updated[0]} ({len(updated)} card(s))")
         return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Arrows (visual links between cards, optional +X/+X buff)
+    # ------------------------------------------------------------------
+
+    def _handle_create_arrow(self, action: dict) -> dict:
+        source = self._get_card(action["source_card_id"])
+        target = self._get_card(action["target_card_id"])
+        arrow_id = str(uuid.uuid4())
+        arrow = Arrow(
+            id=arrow_id,
+            source_card_id=source.id,
+            target_card_id=target.id,
+        )
+        self.state.arrows.append(arrow)
+        self._log_action("create_arrow", f"Arrow: {source.name} → {target.name}")
+        return {"ok": True, "arrow_id": arrow_id}
+
+    def _handle_remove_arrow(self, action: dict) -> dict:
+        arrow_id = action["arrow_id"]
+        arrow = next((a for a in self.state.arrows if a.id == arrow_id), None)
+        if not arrow:
+            return {"ok": False, "error": "Arrow not found"}
+        had_buff = arrow.buff_power or arrow.buff_toughness
+        target_id = arrow.target_card_id
+        self.state.arrows = [a for a in self.state.arrows if a.id != arrow_id]
+        if had_buff:
+            target = self.state.cards.get(target_id)
+            if target and target.zone == "battlefield":
+                self._update_custom_pt_from_counters(target)
+        self._log_action("remove_arrow", "Removed arrow")
+        return {"ok": True}
+
+    def _handle_update_arrow_buff(self, action: dict) -> dict:
+        arrow_id = action["arrow_id"]
+        arrow = next((a for a in self.state.arrows if a.id == arrow_id), None)
+        if not arrow:
+            return {"ok": False, "error": "Arrow not found"}
+        buff_p = action.get("buff_power")
+        buff_t = action.get("buff_toughness")
+        arrow.buff_power = int(buff_p) if buff_p is not None else None
+        arrow.buff_toughness = int(buff_t) if buff_t is not None else None
+        # Recalc target P/T
+        target = self.state.cards.get(arrow.target_card_id)
+        if target and target.zone == "battlefield":
+            self._update_custom_pt_from_counters(target)
+        source = self.state.cards.get(arrow.source_card_id)
+        src_name = source.name if source else "?"
+        tgt_name = target.name if target else "?"
+        if buff_p is not None:
+            self._log_action("update_arrow_buff", f"Arrow {src_name} → {tgt_name}: +{buff_p}/+{buff_t}")
+        else:
+            self._log_action("update_arrow_buff", f"Arrow {src_name} → {tgt_name}: buff removed")
+        return {"ok": True}
+
+    def _remove_arrows_for_card(self, card_id: str) -> None:
+        """Remove all arrows where this card is source or target, recalc P/T on affected targets."""
+        affected_targets = set()
+        remaining = []
+        for a in self.state.arrows:
+            if a.source_card_id == card_id or a.target_card_id == card_id:
+                if a.buff_power or a.buff_toughness:
+                    affected_targets.add(a.target_card_id)
+            else:
+                remaining.append(a)
+        self.state.arrows = remaining
+        for tid in affected_targets:
+            if tid == card_id:
+                continue  # The card leaving doesn't need recalc
+            target = self.state.cards.get(tid)
+            if target and target.zone == "battlefield":
+                self._update_custom_pt_from_counters(target)

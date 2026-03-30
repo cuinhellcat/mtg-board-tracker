@@ -356,10 +356,12 @@ async def api_parse_deck(request: Request):
     card_count = sum(c.get("count", 1) for c in result.get("main", []))
     commanders = result.get("commanders", [])
 
-    # Collect card names for commander dropdown
+    # Collect card names for commander dropdown (include commanders)
     card_names = [c["name"] for c in result.get("main", []) if c.get("found")]
-
     commander_names = [c["name"] for c in commanders]
+    for cn in commander_names:
+        if cn not in card_names:
+            card_names.append(cn)
 
     return JSONResponse({
         "success": True,

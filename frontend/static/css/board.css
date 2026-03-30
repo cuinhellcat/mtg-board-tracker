@@ -325,6 +325,7 @@ button {
 .zone-battlefield {
     flex: 1;
     background: var(--zone-bg-battlefield);
+    position: relative;  /* anchor for arrow SVG overlay */
 }
 
 .zone-hand {

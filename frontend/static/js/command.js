@@ -388,10 +388,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = document.createElement('a');
         a.href = url;
         a.download = 'mtg-game-export-' + Date.now() + '.json';
+        document.body.appendChild(a);
         a.click();
-
-        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         addChatMessage('System', 'Game data exported.', 'system');
+    });
+
+    // ================================================================
+    // Export HTML (interactive standalone viewer)
+    // ================================================================
+
+    document.getElementById('export-html-btn').addEventListener('click', () => {
+        if (!currentState) {
+            addChatMessage('System', 'No game state to export.', 'system');
+            return;
+        }
+
+        const html = window.generateStandaloneHTML(currentState);
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mtg-board-' + Date.now() + '.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        addChatMessage('System', 'Board exported as interactive HTML.', 'system');
     });
 
     // ================================================================
@@ -416,10 +441,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // Collapsible Sections
     // ================================================================
 
+    // Collapsible sections: restore saved state and persist on toggle
+    document.querySelectorAll('.collapsible-section').forEach((section) => {
+        const key = 'cc-collapsed-' + section.id;
+        if (localStorage.getItem(key) === 'true') {
+            section.classList.add('collapsed');
+        } else if (localStorage.getItem(key) === 'false') {
+            section.classList.remove('collapsed');
+        }
+    });
     document.querySelectorAll('.section-toggle').forEach((toggle) => {
         toggle.addEventListener('click', () => {
             const section = toggle.closest('.collapsible-section');
             section.classList.toggle('collapsed');
+            localStorage.setItem('cc-collapsed-' + section.id, section.classList.contains('collapsed'));
         });
     });
 });

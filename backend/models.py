@@ -78,6 +78,15 @@ class PlayerState(BaseModel):
         return data
 
 
+class Arrow(BaseModel):
+    """A visual arrow between two battlefield cards, optionally carrying a +X/+X buff."""
+    id: str  # UUID
+    source_card_id: str
+    target_card_id: str
+    buff_power: Optional[int] = None   # e.g. 1 for +1/+1
+    buff_toughness: Optional[int] = None
+
+
 class ActionEntry(BaseModel):
     """A single entry in the game action log."""
     id: str  # UUID
@@ -98,6 +107,7 @@ class GameState(BaseModel):
     first_player_index: int = 0
     zone_move_counter: int = 0
     action_log: List[ActionEntry] = Field(default_factory=list)
+    arrows: List[Arrow] = Field(default_factory=list)  # Visual arrows between cards (not in snapshot)
     game_started: bool = False
 
 
