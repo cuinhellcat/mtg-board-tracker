@@ -259,7 +259,10 @@ def _format_card_full(card: CardState) -> str:
 
     # Power/toughness for creatures
     if card.power is not None and card.toughness is not None:
-        parts.append(f"({card.power}/{card.toughness})")
+        if card.custom_power is not None:
+            parts.append(f"(including counters and pumps: {card.custom_power}/{card.custom_toughness})")
+        else:
+            parts.append(f"({card.power}/{card.toughness})")
 
     # Loyalty for planeswalkers
     if card.loyalty is not None:
@@ -311,7 +314,10 @@ def _format_card_brief(card: CardState) -> str:
         parts.append(f"[{card.type_line}]")
 
     if card.power is not None and card.toughness is not None:
-        parts.append(f"({card.power}/{card.toughness})")
+        if card.custom_power is not None:
+            parts.append(f"(including counters and pumps: {card.custom_power}/{card.custom_toughness})")
+        else:
+            parts.append(f"({card.power}/{card.toughness})")
 
     if card.counters:
         counter_strs = []
