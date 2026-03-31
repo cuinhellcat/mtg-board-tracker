@@ -571,6 +571,13 @@ class GameEngine:
         # Advance to main1 after draw
         self.state.phase = "main1"
 
+        # Freeze LLM hand order for stable numbering during this turn
+        llm_hand = sorted(
+            [c for c in self.state.cards.values() if c.zone == "hand" and c.owner_index == 1],
+            key=lambda c: c.zone_moved_at or 0,
+        )
+        self.state.frozen_hand_order = [c.id for c in llm_hand]
+
 
     def _handle_draw_card(self, action: dict) -> dict:
         player_index = action["player_index"]
@@ -1321,6 +1328,13 @@ class GameEngine:
         self.state.active_player_index = first_player_index
         self.state.first_player_index = first_player_index
         self.state.game_started = True
+
+        # Freeze LLM hand order for stable numbering
+        llm_hand = sorted(
+            [c for c in self.state.cards.values() if c.zone == "hand" and c.owner_index == 1],
+            key=lambda c: c.zone_moved_at or 0,
+        )
+        self.state.frozen_hand_order = [c.id for c in llm_hand]
 
         self._log_action("start_game", "Game started!")
         return {"ok": True}

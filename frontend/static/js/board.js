@@ -60,6 +60,7 @@
     /** True while a drag-and-drop is in progress — suppresses hover preview. */
     var _isDragging = false;
 
+
     /* ==================================================================
        ERROR TOAST
        ================================================================== */
@@ -970,14 +971,32 @@
             document.getElementById('hide-opponent-hand').checked;
 
         if (hideOpponentHand) {
-            handCards.forEach(function (card, idx) {
+            // Use frozen hand order from GameState for stable numbering
+            var frozen = (currentState && currentState.frozen_hand_order) || [];
+            // Fallback: if frozen is empty (old save / toggled mid-game), use current order
+            if (frozen.length === 0) {
+                frozen = handCards.map(function (c) { return c.id; });
+            }
+
+            handCards.forEach(function (card) {
+                var frozenIdx = frozen.indexOf(card.id);
+                var displayNum = frozenIdx !== -1 ? frozenIdx + 1 : frozen.length + 1;
+
                 var back = document.createElement('div');
-                back.className = 'hidden-hand-card';
-                back.innerHTML = '<span class="hidden-hand-number">' + (idx + 1) + '</span>';
-                // Still allow drag for manual tracking
+                back.className = 'hidden-hand-card card';
+                back.innerHTML = '<span class="hidden-hand-number">' + displayNum + '</span>';
                 back.dataset.cardId = card.id;
                 back.dataset.zone = 'hand';
                 back.dataset.playerIndex = String(playerIndex);
+                // Context menu (right-click)
+                back.addEventListener('contextmenu', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    showCardContextMenu(e, card);
+                });
+                back.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                });
                 DragDrop.makeCardDraggable(back);
                 container.appendChild(back);
             });

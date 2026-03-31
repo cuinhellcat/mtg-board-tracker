@@ -122,8 +122,18 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     llm_hand = _get_zone_cards(game_state, llm_index, "hand")
     lines.append(f"Hand ({len(llm_hand)} cards):")
     if llm_hand:
-        for i, card in enumerate(llm_hand, 1):
-            prefix = f"Handkarte{i}: " if number_hand else ""
+        frozen = game_state.frozen_hand_order
+        # Fallback: if frozen is empty (old save / toggled mid-game), use current order
+        if not frozen:
+            frozen = [c.id for c in llm_hand]
+        for card in llm_hand:
+            if number_hand:
+                idx = frozen.index(card.id) + 1 if card.id in frozen else len(frozen) + 1
+                if card.id not in frozen:
+                    frozen.append(card.id)
+                prefix = f"Handkarte{idx}: "
+            else:
+                prefix = ""
             lines.append(f"  - {prefix}{_format_card_full(card)}")
     else:
         lines.append("  (empty)")
@@ -257,6 +267,8 @@ def _get_zone_cards(
         else:
             if card.owner_index == player_index:
                 cards.append(card)
+    # Sort by zone_moved_at to match frontend ordering
+    cards.sort(key=lambda c: c.zone_moved_at or 0)
     return cards
 
 
@@ -602,11 +614,20 @@ def generate_bot_hand(game_state: GameState, oracle_mode: str = "off", number_ha
 
     lines = [f"{llm_player.name}'s Hand ({len(hand_cards)} cards):"]
     if hand_cards:
-        for i, card in enumerate(hand_cards, 1):
+        frozen = game_state.frozen_hand_order
+        if not frozen:
+            frozen = [c.id for c in hand_cards]
+        for card in hand_cards:
             show = oracle_mode != "off" or card.show_oracle_text
             orig = card.show_oracle_text
             card.show_oracle_text = show
-            prefix = f"Handkarte{i}: " if number_hand else ""
+            if number_hand:
+                idx = frozen.index(card.id) + 1 if card.id in frozen else len(frozen) + 1
+                if card.id not in frozen:
+                    frozen.append(card.id)
+                prefix = f"Handkarte{idx}: "
+            else:
+                prefix = ""
             lines.append(f"  - {prefix}{_format_card_full(card)}")
             card.show_oracle_text = orig
     else:

@@ -108,6 +108,7 @@ class GameState(BaseModel):
     zone_move_counter: int = 0
     action_log: List[ActionEntry] = Field(default_factory=list)
     arrows: List[Arrow] = Field(default_factory=list)  # Visual arrows between cards (not in snapshot)
+    frozen_hand_order: List[str] = Field(default_factory=list)  # Card IDs for stable hand numbering (refreshed on turn change)
     game_started: bool = False
 
 
