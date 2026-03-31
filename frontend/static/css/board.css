@@ -1592,9 +1592,9 @@ button {
     font-size: 11px;
 }
 
-/* ---------- SCRY MODAL ---------- */
+/* ---------- SCRY / SURVEIL MODAL ---------- */
 .scry-modal-content {
-    width: 600px;
+    width: 800px;
 }
 
 .scry-instructions {
@@ -1605,30 +1605,40 @@ button {
 
 .scry-columns {
     display: flex;
-    gap: 16px;
+    gap: 12px;
 }
 
 .scry-column {
     flex: 1;
     min-height: 120px;
     background: rgba(0, 0, 0, 0.2);
-    border: 1px dashed var(--border-color);
+    border: 2px dashed var(--border-color);
     border-radius: var(--radius-md);
     padding: 8px;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.scry-column.scry-drop-active {
+    border-color: var(--accent);
+    background: rgba(100, 100, 255, 0.08);
 }
 
 .scry-column h4 {
     margin: 0 0 8px 0;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
     text-transform: uppercase;
+}
+
+.scry-graveyard h4 {
+    color: var(--danger, #e55);
 }
 
 .scry-card-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    min-height: 80px;
+    min-height: 60px;
 }
 
 .scry-card-item {
@@ -1639,12 +1649,16 @@ button {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: background var(--transition-fast);
+    cursor: grab;
+    transition: background var(--transition-fast), opacity var(--transition-fast);
 }
 
 .scry-card-item:hover {
     background: var(--bg-card-hover);
+}
+
+.scry-card-item.scry-dragging {
+    opacity: 0.4;
 }
 
 .scry-card-item .card-name {
@@ -1660,7 +1674,6 @@ button {
     align-items: center;
     gap: 8px;
     flex: 1;
-    cursor: pointer;
 }
 
 .scry-reorder {

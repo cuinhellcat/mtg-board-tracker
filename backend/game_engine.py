@@ -1052,10 +1052,11 @@ class GameEngine:
     def _handle_scry_resolve(self, action: dict) -> dict:
         card_ids_top = action.get("card_ids_top", [])
         card_ids_bottom = action.get("card_ids_bottom", [])
+        card_ids_graveyard = action.get("card_ids_graveyard", [])
 
         # Find the player index from any of the cards
         player_index = None
-        for cid in card_ids_top + card_ids_bottom:
+        for cid in card_ids_top + card_ids_bottom + card_ids_graveyard:
             card = self.state.cards.get(cid)
             if card:
                 player_index = card.owner_index
@@ -1064,13 +1065,17 @@ class GameEngine:
         if player_index is None:
             return {"ok": True}
 
-        # Remove these cards from their current position and reinsert
-        # We need to rebuild the library order
-        all_scried_ids = set(card_ids_top + card_ids_bottom)
+        # Move graveyard cards first (surveil)
+        for cid in card_ids_graveyard:
+            card = self.state.cards.get(cid)
+            if card:
+                self._move_to_zone(card, "graveyard")
+
+        # Rebuild library order for top/bottom cards
+        all_scried_ids = set(card_ids_top + card_ids_bottom + card_ids_graveyard)
         library = self._library_cards(player_index)
         remaining = [c for c in library if c.id not in all_scried_ids]
 
-        # Rebuild cards dict: non-library cards, then top scry cards, remaining library, bottom scry cards
         non_library = {
             cid: c for cid, c in self.state.cards.items()
             if not (c.zone == "library" and c.owner_index == player_index)
@@ -1078,18 +1083,22 @@ class GameEngine:
 
         new_cards: Dict[str, CardState] = {}
         new_cards.update(non_library)
-        # Top of library (scry top cards)
         for cid in card_ids_top:
             new_cards[cid] = self.state.cards[cid]
-        # Remaining library
         for c in remaining:
             new_cards[c.id] = c
-        # Bottom of library (scry bottom cards)
         for cid in card_ids_bottom:
             new_cards[cid] = self.state.cards[cid]
 
         self.state.cards = new_cards
-        self._log_action("scry_resolve", f"Resolved scry: {len(card_ids_top)} to top, {len(card_ids_bottom)} to bottom")
+        parts = []
+        if card_ids_top:
+            parts.append(f"{len(card_ids_top)} to top")
+        if card_ids_bottom:
+            parts.append(f"{len(card_ids_bottom)} to bottom")
+        if card_ids_graveyard:
+            parts.append(f"{len(card_ids_graveyard)} to graveyard")
+        self._log_action("scry_resolve", f"Resolved scry/surveil: {', '.join(parts)}")
         return {"ok": True}
 
     def _handle_search_library(self, action: dict) -> dict:

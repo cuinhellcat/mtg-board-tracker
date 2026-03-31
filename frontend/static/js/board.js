@@ -2255,16 +2255,19 @@
             fallback.style.width = w + 'px';
             fallback.style.minHeight = h + 'px';
         }
-        // Switch to large image when zoomed in
+        // Switch to large image when zoomed in (respect transform state)
         if (zoom > 1 && previewCardRef) {
-            var largeUri = previewCardRef.large_image_uri;
-            if (largeUri && previewImg && previewImg.src !== largeUri) {
-                previewImg.src = largeUri;
-            }
             var bf = previewCardRef.back_face || {};
-            var largeBf = bf.large_image_uri;
-            if (largeBf && previewBackImg && previewBackImg.src && previewBackImg.src.indexOf('_large') === -1) {
-                previewBackImg.src = largeBf;
+            var isXformed = previewCardRef.transformed && bf.name;
+            var frontLarge = previewCardRef.large_image_uri;
+            var backLarge = bf.large_image_uri;
+            var mainLarge = isXformed ? (backLarge || frontLarge) : frontLarge;
+            var otherLarge = isXformed ? frontLarge : backLarge;
+            if (mainLarge && previewImg && previewImg.src !== mainLarge) {
+                previewImg.src = mainLarge;
+            }
+            if (otherLarge && previewBackImg && previewBackImg.src !== otherLarge) {
+                previewBackImg.src = otherLarge;
             }
         }
     }
@@ -2318,7 +2321,7 @@
             previewBackImg.onerror = function () {
                 previewBackEl.style.display = 'none';
             };
-            // Active face = no overlay, inactive face = overlay
+            // Left = active face (clear), right = inactive face (dimmed)
             frontOverlay.className = 'card-preview-face-overlay';
             backOverlay.className = 'card-preview-face-overlay inactive';
         } else {
@@ -2768,49 +2771,55 @@
        SCRY MODAL
        ================================================================== */
 
-    var scryTopCards = [];
-    var scryBottomCards = [];
+    var scryZones = { top: [], bottom: [], graveyard: [] };
+    var scryDragCardId = null;
 
     function showScryModal(data) {
-        scryTopCards = (data.cards || []).slice();
-        scryBottomCards = [];
-
+        scryZones.top = (data.cards || []).slice();
+        scryZones.bottom = [];
+        scryZones.graveyard = [];
         renderScryLists();
-
         document.getElementById('scry-modal').style.display = 'flex';
     }
 
     function renderScryLists() {
-        var topList = document.getElementById('scry-top-list');
-        var bottomList = document.getElementById('scry-bottom-list');
-        topList.innerHTML = '';
-        bottomList.innerHTML = '';
-
-        scryTopCards.forEach(function (card, idx) {
-            topList.appendChild(createScryCardItem(card, 'top', idx));
-        });
-
-        scryBottomCards.forEach(function (card, idx) {
-            bottomList.appendChild(createScryCardItem(card, 'bottom', idx));
+        ['top', 'bottom', 'graveyard'].forEach(function (zone) {
+            var listEl = document.getElementById('scry-' + zone + '-list');
+            listEl.innerHTML = '';
+            scryZones[zone].forEach(function (card, idx) {
+                listEl.appendChild(createScryCardItem(card, zone, idx));
+            });
         });
     }
 
-    function createScryCardItem(card, location, index) {
+    function removeFromScryZone(cardId) {
+        for (var z in scryZones) {
+            scryZones[z] = scryZones[z].filter(function (c) { return c.id !== cardId; });
+        }
+    }
+
+    function findScryCard(cardId) {
+        for (var z in scryZones) {
+            for (var i = 0; i < scryZones[z].length; i++) {
+                if (scryZones[z][i].id === cardId) return scryZones[z][i];
+            }
+        }
+        return null;
+    }
+
+    function createScryCardItem(card, zone, index) {
         var item = document.createElement('div');
         item.className = 'scry-card-item';
+        item.draggable = true;
         item.dataset.cardId = card.id;
-        item.dataset.location = location;
-        item.dataset.index = index;
 
-        var list = location === 'top' ? scryTopCards : scryBottomCards;
-
-        // Reorder buttons (only when list has >1 items)
+        // Reorder buttons for top zone
         var reorderHtml = '';
-        if (location === 'top' && scryTopCards.length > 1) {
+        if (zone === 'top' && scryZones.top.length > 1) {
             reorderHtml =
                 '<span class="scry-reorder">' +
                 (index > 0 ? '<button class="scry-btn-up" title="Move up">▲</button>' : '') +
-                (index < scryTopCards.length - 1 ? '<button class="scry-btn-down" title="Move down">▼</button>' : '') +
+                (index < scryZones.top.length - 1 ? '<button class="scry-btn-down" title="Move down">▼</button>' : '') +
                 '</span>';
         }
 
@@ -2821,16 +2830,15 @@
             '</span>' +
             reorderHtml;
 
-        // Click card info to toggle between top and bottom
-        item.querySelector('.scry-card-info').addEventListener('click', function () {
-            if (location === 'top') {
-                scryTopCards.splice(index, 1);
-                scryBottomCards.push(card);
-            } else {
-                scryBottomCards.splice(index, 1);
-                scryTopCards.push(card);
-            }
-            renderScryLists();
+        // Drag start
+        item.addEventListener('dragstart', function (e) {
+            scryDragCardId = card.id;
+            e.dataTransfer.effectAllowed = 'move';
+            item.classList.add('scry-dragging');
+        });
+        item.addEventListener('dragend', function () {
+            item.classList.remove('scry-dragging');
+            scryDragCardId = null;
         });
 
         // Reorder button handlers
@@ -2838,8 +2846,8 @@
         if (upBtn) {
             upBtn.addEventListener('click', function (e) {
                 e.stopPropagation();
-                scryTopCards.splice(index, 1);
-                scryTopCards.splice(index - 1, 0, card);
+                scryZones.top.splice(index, 1);
+                scryZones.top.splice(index - 1, 0, card);
                 renderScryLists();
             });
         }
@@ -2847,39 +2855,86 @@
         if (downBtn) {
             downBtn.addEventListener('click', function (e) {
                 e.stopPropagation();
-                scryTopCards.splice(index, 1);
-                scryTopCards.splice(index + 1, 0, card);
+                scryZones.top.splice(index, 1);
+                scryZones.top.splice(index + 1, 0, card);
                 renderScryLists();
             });
         }
 
         // Hover preview
-        item.addEventListener('mouseenter', function (e) {
-            showCardPreview(card, e);
-        });
-        item.addEventListener('mousemove', function (e) {
-            moveCardPreview(e);
-        });
-        item.addEventListener('mouseleave', function () {
-            hideCardPreview();
-        });
+        item.addEventListener('mouseenter', function (e) { showCardPreview(card, e); });
+        item.addEventListener('mousemove', function (e) { moveCardPreview(e); });
+        item.addEventListener('mouseleave', function () { hideCardPreview(); });
 
         return item;
     }
 
-    function confirmScry() {
-        var topIds = scryTopCards.map(function (c) { return c.id; });
-        var bottomIds = scryBottomCards.map(function (c) { return c.id; });
+    function setupScryDropZones() {
+        ['top', 'bottom', 'graveyard'].forEach(function (zone) {
+            var dropEl = document.getElementById('scry-drop-' + zone);
+            dropEl.addEventListener('dragover', function (e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                dropEl.classList.add('scry-drop-active');
+            });
+            dropEl.addEventListener('dragleave', function () {
+                dropEl.classList.remove('scry-drop-active');
+            });
+            dropEl.addEventListener('drop', function (e) {
+                e.preventDefault();
+                dropEl.classList.remove('scry-drop-active');
+                if (!scryDragCardId) return;
+                var card = findScryCard(scryDragCardId);
+                if (!card) return;
+                removeFromScryZone(scryDragCardId);
+                scryZones[zone].push(card);
+                renderScryLists();
+            });
+        });
+    }
 
+    var SCRY_ORACLE_SKIP = new Set([
+        'Plains', 'Island', 'Swamp', 'Mountain', 'Forest', 'Wastes',
+        'Snow-Covered Plains', 'Snow-Covered Island', 'Snow-Covered Swamp',
+        'Snow-Covered Mountain', 'Snow-Covered Forest',
+        'Treasure', 'Food', 'Clue', 'Blood', 'Gold',
+        'Map', 'Powerstone', 'Junk', 'Shard', 'Incubator'
+    ]);
+
+    function stripReminderText(text) {
+        return text.replace(/\s*\([^()]*\)/g, '').trim();
+    }
+
+    function copyScryCards() {
+        var allCards = scryZones.top.concat(scryZones.bottom).concat(scryZones.graveyard);
+        if (!allCards.length) return;
+        var lines = ['Scry/Surveil (' + allCards.length + ' cards):'];
+        allCards.forEach(function (card) {
+            var parts = [card.name];
+            if (card.mana_cost) parts.push(card.mana_cost);
+            if (card.type_line) parts.push('[' + card.type_line + ']');
+            if (card.oracle_text && !SCRY_ORACLE_SKIP.has(card.name)) {
+                var oracle = stripReminderText(card.oracle_text.replace(/\n/g, ' / '));
+                if (oracle) parts.push('-- ' + oracle);
+            }
+            lines.push('  - ' + parts.join(' '));
+        });
+        navigator.clipboard.writeText(lines.join('\n')).catch(function () {});
+        var btn = document.getElementById('scry-copy');
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = 'Copy for Bot'; }, 1500);
+    }
+
+    function confirmScry() {
         MTGSocket.send({
             action: 'scry_resolve',
-            card_ids_top: topIds,
-            card_ids_bottom: bottomIds
+            card_ids_top: scryZones.top.map(function (c) { return c.id; }),
+            card_ids_bottom: scryZones.bottom.map(function (c) { return c.id; }),
+            card_ids_graveyard: scryZones.graveyard.map(function (c) { return c.id; })
         });
 
         document.getElementById('scry-modal').style.display = 'none';
-        scryTopCards = [];
-        scryBottomCards = [];
+        scryZones = { top: [], bottom: [], graveyard: [] };
     }
 
     /* ==================================================================
@@ -3106,9 +3161,13 @@
             });
         });
 
-        // Scry confirm
+        // Scry/Surveil
+        setupScryDropZones();
         document.getElementById('scry-confirm').addEventListener('click', function () {
             confirmScry();
+        });
+        document.getElementById('scry-copy').addEventListener('click', function () {
+            copyScryCards();
         });
 
         // Search filter input
