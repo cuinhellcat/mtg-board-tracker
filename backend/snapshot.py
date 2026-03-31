@@ -442,8 +442,15 @@ def _get_display_card(card: CardState) -> CardState:
 
 
 def _classify_card(card: CardState) -> str:
-    """Classify a card into 'land', 'creature', or 'other' by type line."""
+    """Classify a card into 'land', 'creature', or 'other' by type line.
+
+    For DFCs with combined type lines (e.g. 'Artifact // Land'),
+    use only the active face — front face for untransformed cards
+    (transformed cards already have back-face type via _get_display_card).
+    """
     type_line = card.type_line or ""
+    if " // " in type_line and not card.transformed:
+        type_line = type_line.split(" // ")[0]
     if "Creature" in type_line:
         return "creature"
     if "Land" in type_line:
@@ -486,18 +493,37 @@ def _render_battlefield_grouped(
         grouped = _group_basic_lands(lands)
         land_strs = []
         land_linked_lines = []
+        # Lands that need full detail (DFCs, complex abilities) go here
+        land_full_lines = []
         for item in grouped:
             if isinstance(item, str):
                 # Grouped basic lands (e.g. "Swamp x3")
                 land_strs.append(item)
             else:
-                text = item.name
+                # Check if this land needs full rendering (DFC or has oracle beyond simple mana)
+                is_dfc = item.transformed or bool(item.back_face and item.back_face.get("name"))
                 mana = _extract_simple_mana(item)
-                if mana:
-                    text += f" ({mana})"
-                if item.tapped:
-                    text += " TAPPED"
-                land_strs.append(text)
+                has_complex_oracle = bool(item.oracle_text) and (
+                    mana is None or item.oracle_text.count("\n") > 0
+                    or len(item.oracle_text) > 60
+                )
+                needs_full = is_dfc or (has_complex_oracle and _oracle_mode in ("reduced", "full"))
+
+                if needs_full:
+                    # Render as full card line
+                    label = f"    - {_format_card_full(item)}"
+                    if is_dfc and not item.transformed:
+                        label += " (front face)"
+                    elif is_dfc and item.transformed:
+                        label += " (transformed)"
+                    land_full_lines.append(label)
+                else:
+                    text = item.name
+                    if mana:
+                        text += f" ({mana})"
+                    if item.tapped:
+                        text += " TAPPED"
+                    land_strs.append(text)
                 for linked_id in item.linked_exile_cards:
                     linked = game_state.cards.get(linked_id)
                     if linked:
@@ -511,8 +537,13 @@ def _render_battlefield_grouped(
                         land_linked_lines.append(
                             f"    ({item.name} enchanted by: {att.name})"
                         )
-        lines.append(f"  Lands: {', '.join(land_strs)}")
+        if land_strs:
+            lines.append(f"  Lands: {', '.join(land_strs)}")
         lines.extend(land_linked_lines)
+        if land_full_lines:
+            if not land_strs:
+                lines.append("  Lands:")
+            lines.extend(land_full_lines)
 
     if creatures or creature_fd_lines:
         lines.append("  Creatures:")
