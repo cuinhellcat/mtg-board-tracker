@@ -62,8 +62,17 @@
                     <span id="recent-actions-count">1</span>
                     <button class="btn btn-xs" id="recent-actions-plus">+</button>
                 </label>
-                <label class="snapshot-control-label">
-                    <input type="checkbox" id="force-all-oracle"> Alle Oracle-Texte anzeigen
+                <label class="snapshot-control-label">Oracle-Texte:
+                    <select id="oracle-mode">
+                        <option value="off">Aus</option>
+                        <option value="reduced">Reduziert</option>
+                        <option value="full">Voll</option>
+                    </select>
+                </label>
+            </div>
+            <div id="hand-note-wrapper" class="snapshot-controls" style="display:none;">
+                <label class="snapshot-control-label" style="flex:1;">Handkarten-Hinweis:
+                    <textarea id="hand-note-text" class="hand-note-textarea monospace" rows="2" placeholder="Hinweis für die KI zu nummerierten Handkarten..."></textarea>
                 </label>
             </div>
             <textarea id="snapshot-text" class="snapshot-textarea monospace" readonly rows="10" placeholder="Waiting for state..."></textarea>

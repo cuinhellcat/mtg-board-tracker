@@ -565,15 +565,17 @@ async def websocket_endpoint(websocket: WebSocket):
             if action_type == "get_snapshot":
                 notes = action.get("notes", "")
                 rac = action.get("recent_actions_count", 1)
-                force_all_oracle = action.get("force_all_oracle", False)
+                oracle_mode = action.get("oracle_mode", "off")
+                number_hand = action.get("number_hand", False)
                 action_log = [e.model_dump() for e in engine.state.action_log]
-                snapshot_text = generate_snapshot(engine.state, action_log, notes=notes, recent_actions_count=rac, force_all_oracle=force_all_oracle)
+                snapshot_text = generate_snapshot(engine.state, action_log, notes=notes, recent_actions_count=rac, oracle_mode=oracle_mode, number_hand=number_hand)
                 await websocket.send_json({"type": "snapshot", "text": snapshot_text})
                 continue
 
             if action_type == "get_bot_hand":
-                force_all_oracle = action.get("force_all_oracle", False)
-                hand_text = generate_bot_hand(engine.state, force_all_oracle=force_all_oracle)
+                oracle_mode = action.get("oracle_mode", "off")
+                number_hand = action.get("number_hand", False)
+                hand_text = generate_bot_hand(engine.state, oracle_mode=oracle_mode, number_hand=number_hand)
                 await websocket.send_json({"type": "bot_hand", "text": hand_text})
                 continue
 

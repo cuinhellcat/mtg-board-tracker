@@ -15,47 +15,63 @@ BASIC_LANDS = {"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes",
                "Snow-Covered Plains", "Snow-Covered Island", "Snow-Covered Swamp",
                "Snow-Covered Mountain", "Snow-Covered Forest"}
 
+# Cards whose oracle text is trivial / universally known — skip in snapshot
+ORACLE_SKIP = BASIC_LANDS | {
+    "Treasure", "Food", "Clue", "Blood", "Gold",
+    "Map", "Powerstone", "Junk", "Shard", "Incubator",
+}
+
 # Regex: matches simple unconditional "{T}: Add {X}" or "{T}: Add {X} or {Y}" etc.
 _SIMPLE_MANA_RE = re.compile(
     r"\{T\}: [Aa]dd (\{[WUBRGC]\}(?:\s*(?:or|,)\s*\{[WUBRGC]\})*)\."
 )
 
+# Regex: matches reminder text in parentheses — e.g. "(A Food token is an artifact ...)"
+_REMINDER_RE = re.compile(r"\s*\([^()]*\)")
 
-def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", recent_actions_count: int = 1, force_all_oracle: bool = False) -> str:
+# Current oracle mode for snapshot rendering (set per-request)
+_oracle_mode = "off"
+
+
+def _strip_reminder_text(text: str) -> str:
+    """Remove reminder text (parenthesised clauses) from oracle text."""
+    return _REMINDER_RE.sub("", text).strip()
+
+
+def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", recent_actions_count: int = 1, oracle_mode: str = "off", number_hand: bool = False) -> str:
     """
     Generate a board state snapshot from the LLM player's perspective.
 
-    Convention: player index 1 is the LLM, player index 0 is the human.
+    oracle_mode: "off" (per-card flags only), "reduced" (all oracle minus
+    reminder text & trivial cards), "full" (all oracle text verbatim).
+    number_hand: if True, prefix each LLM hand card with "Handkarte1:", etc.
 
-    Principles:
-    - Only mention deviations from defaults (untapped is default, so not annotated)
-    - Standard exile is NOT included
-    - Linked exile IS included (shown under parent card)
-    - Attached cards (Auras/Equipment) are shown under parent card
-    - Cards with show_oracle_text flag include oracle text even in brief format
-    - LLM sees full hand with oracle text; human hand is hidden (count only)
-    - Group identical basic lands
+    Convention: player index 1 is the LLM, player index 0 is the human.
     """
+    global _oracle_mode
     if len(game_state.players) < 2:
         return "=== No game in progress ==="
 
-    # Temporarily force oracle text on all cards if requested
+    _oracle_mode = oracle_mode
+
+    # In reduced/full mode, temporarily force oracle text on all cards
     original_oracle_flags: dict = {}
-    if force_all_oracle:
+    if oracle_mode in ("reduced", "full"):
         for cid, card in game_state.cards.items():
             original_oracle_flags[cid] = card.show_oracle_text
             card.show_oracle_text = True
 
     try:
-        return _generate_snapshot_inner(game_state, action_log, notes, recent_actions_count)
+        return _generate_snapshot_inner(game_state, action_log, notes, recent_actions_count, number_hand)
     finally:
+        _oracle_mode = "off"
         # Restore original flags
         for cid, orig in original_oracle_flags.items():
             if cid in game_state.cards:
                 game_state.cards[cid].show_oracle_text = orig
 
 
-def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str, recent_actions_count: int) -> str:
+def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str, recent_actions_count: int, number_hand: bool = False) -> str:
     llm_index = 1
     human_index = 0
     llm_player = game_state.players[llm_index]
@@ -106,8 +122,9 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     llm_hand = _get_zone_cards(game_state, llm_index, "hand")
     lines.append(f"Hand ({len(llm_hand)} cards):")
     if llm_hand:
-        for card in llm_hand:
-            lines.append(f"  - {_format_card_full(card)}")
+        for i, card in enumerate(llm_hand, 1):
+            prefix = f"Handkarte{i}: " if number_hand else ""
+            lines.append(f"  - {prefix}{_format_card_full(card)}")
     else:
         lines.append("  (empty)")
     lines.append("")
@@ -277,8 +294,13 @@ def _format_card_full(card: CardState) -> str:
 
     # Oracle text — only when explicitly flagged per card
     if card.show_oracle_text and card.oracle_text:
-        oracle = card.oracle_text.replace("\n", " / ")
-        parts.append(f"-- {oracle}")
+        skip = _oracle_mode == "reduced" and card.name in ORACLE_SKIP
+        if not skip:
+            oracle = card.oracle_text.replace("\n", " / ")
+            if _oracle_mode == "reduced":
+                oracle = _strip_reminder_text(oracle)
+            if oracle:
+                parts.append(f"-- {oracle}")
 
     # User note — always shown, appears like oracle text
     if card.note:
@@ -327,8 +349,13 @@ def _format_card_brief(card: CardState) -> str:
 
     # Include oracle text when explicitly flagged
     if card.show_oracle_text and card.oracle_text:
-        oracle = card.oracle_text.replace("\n", " / ")
-        parts.append(f"-- {oracle}")
+        skip = _oracle_mode == "reduced" and card.name in ORACLE_SKIP
+        if not skip:
+            oracle = card.oracle_text.replace("\n", " / ")
+            if _oracle_mode == "reduced":
+                oracle = _strip_reminder_text(oracle)
+            if oracle:
+                parts.append(f"-- {oracle}")
 
     # User note
     if card.note:
@@ -562,24 +589,28 @@ def _group_basic_lands(cards: List[CardState]) -> list:
     return result
 
 
-def generate_bot_hand(game_state: GameState, force_all_oracle: bool = False) -> str:
+def generate_bot_hand(game_state: GameState, oracle_mode: str = "off", number_hand: bool = False) -> str:
     """Generate a text snippet of the bot's (LLM, player index 1) hand cards."""
+    global _oracle_mode
     if len(game_state.players) < 2:
         return "(No game in progress)"
 
+    _oracle_mode = oracle_mode
     llm_index = 1
     llm_player = game_state.players[llm_index]
     hand_cards = _get_zone_cards(game_state, llm_index, "hand")
 
     lines = [f"{llm_player.name}'s Hand ({len(hand_cards)} cards):"]
     if hand_cards:
-        for card in hand_cards:
-            show = force_all_oracle or card.show_oracle_text
+        for i, card in enumerate(hand_cards, 1):
+            show = oracle_mode != "off" or card.show_oracle_text
             orig = card.show_oracle_text
             card.show_oracle_text = show
-            lines.append(f"  - {_format_card_full(card)}")
+            prefix = f"Handkarte{i}: " if number_hand else ""
+            lines.append(f"  - {prefix}{_format_card_full(card)}")
             card.show_oracle_text = orig
     else:
         lines.append("  (empty)")
 
+    _oracle_mode = "off"
     return "\n".join(lines)

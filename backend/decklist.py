@@ -51,20 +51,8 @@ def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
             current_section = "sideboard"
             continue
 
-        # Check for commander designation (supports Partner: multiple Commander: lines)
-        commander_match = re.match(r"^(?:COMMANDER|Commander|commander)\s*:\s*(.+)$", line)
-        if commander_match:
-            commander_name = commander_match.group(1).strip()
-            card_data = _lookup_card(commander_name, scryfall_cache)
-            commanders.append({
-                "name": card_data["name"],
-                "count": 1,
-                "found": card_data["found"],
-                "scryfall_data": card_data["scryfall_data"],
-            })
-            if not card_data["found"]:
-                warnings.append(f"Card '{commander_name}' not found in Scryfall cache")
-            continue
+        # Strip "Commander:" prefix — commander is selected via dropdown on setup page
+        line = re.sub(r"^(?:COMMANDER|Commander|commander)\s*:\s*", "", line)
 
         # Parse card line: optional count + card name
         # Supports "1 Sol Ring", "1x Sol Ring", "1X Sol Ring"

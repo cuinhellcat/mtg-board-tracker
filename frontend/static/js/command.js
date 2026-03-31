@@ -63,8 +63,30 @@ document.addEventListener('DOMContentLoaded', () => {
         snapshotTextEl.value = text;
     });
 
-    const forceAllOracleEl = document.getElementById('force-all-oracle');
-    forceAllOracleEl.checked = localStorage.getItem('forceAllOracle') === 'true';
+    const oracleModeEl = document.getElementById('oracle-mode');
+    oracleModeEl.value = localStorage.getItem('oracleMode') || 'off';
+
+    // Hand-note: shown when hideOpponentHand is active
+    const handNoteWrapper = document.getElementById('hand-note-wrapper');
+    const handNoteTextEl = document.getElementById('hand-note-text');
+    const defaultHandNote = 'Beim Beschreiben deines Zuges wenn du eine Handkarte ausspielst, nenne zusätzlich die Nummer der Handkarte (im Snapshot mit "Handkarte#" bezeichnet).';
+
+    function syncHandNoteVisibility() {
+        const hidden = localStorage.getItem('hideOpponentHand') !== 'false';
+        handNoteWrapper.style.display = hidden ? '' : 'none';
+    }
+    syncHandNoteVisibility();
+    // Listen for changes from the board window
+    window.addEventListener('storage', (e) => {
+        if (e.key === 'hideOpponentHand') {
+            syncHandNoteVisibility();
+            requestSnapshot();
+        }
+    });
+    handNoteTextEl.value = localStorage.getItem('handNote') || defaultHandNote;
+    handNoteTextEl.addEventListener('input', () => {
+        localStorage.setItem('handNote', handNoteTextEl.value);
+    });
 
     // Reduce Clutter — persistent LLM instructions
     clutterTextEl.value = localStorage.getItem('mtg-reduce-clutter') || '';
@@ -73,15 +95,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function requestSnapshot() {
+        var hideHand = localStorage.getItem('hideOpponentHand') !== 'false';
         MTGSocket.send({
             action: 'get_snapshot',
             recent_actions_count: recentActionsCount,
-            force_all_oracle: forceAllOracleEl.checked
+            oracle_mode: oracleModeEl.value,
+            number_hand: hideHand
         });
     }
 
-    forceAllOracleEl.addEventListener('change', () => {
-        localStorage.setItem('forceAllOracle', forceAllOracleEl.checked);
+    oracleModeEl.addEventListener('change', () => {
+        localStorage.setItem('oracleMode', oracleModeEl.value);
         requestSnapshot();
     });
 
@@ -307,6 +331,15 @@ document.addEventListener('DOMContentLoaded', () => {
             text += '\n\n=== INSTRUCTIONS ===\n' + clutter;
         }
 
+        // Append hand-note when opponent hand is hidden
+        const hideHand = localStorage.getItem('hideOpponentHand') !== 'false';
+        if (hideHand) {
+            const handNote = handNoteTextEl.value.trim();
+            if (handNote) {
+                text += '\n\n=== HAND NOTE ===\n' + handNote;
+            }
+        }
+
         // Append additional notes if any
         const notes = notesTextEl.value.trim();
         if (notes) {
@@ -361,7 +394,8 @@ document.addEventListener('DOMContentLoaded', () => {
         copyBotHandBtn.classList.remove('btn-blink');
         MTGSocket.send({
             action: 'get_bot_hand',
-            force_all_oracle: forceAllOracleEl.checked
+            oracle_mode: oracleModeEl.value,
+            number_hand: localStorage.getItem('hideOpponentHand') !== 'false'
         });
     });
 

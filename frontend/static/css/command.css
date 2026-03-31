@@ -333,12 +333,34 @@ body {
     color: var(--text-primary);
 }
 
+.snapshot-control-label select {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 11px;
+}
+
 .btn-xs {
     padding: 1px 7px;
     font-size: 13px;
     line-height: 1.2;
     min-width: 22px;
     border-radius: 4px;
+}
+
+/* Hand-note textarea */
+.hand-note-textarea {
+    width: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 11px;
+    resize: vertical;
+    margin-top: 2px;
 }
 
 /* Snapshot textarea */

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.models import ActionEntry, Arrow, CardState, ChatMessage, GameState, PlayerState
 from backend.scryfall import get_card_by_name as scryfall_lookup
+from backend.printing_prefs import get_preference
 
 BASE_DIR = Path(__file__).parent.parent
 
@@ -98,6 +99,9 @@ class GameEngine:
             state_data = data.get("state", {})
             self.state = GameState.model_validate(state_data)
             self.chat_log = [ChatMessage.model_validate(m) for m in data.get("chat_log", [])]
+            # Re-apply printing preferences so saved art choices survive restarts
+            for card in self.state.cards.values():
+                self._apply_printing_pref(card)
             self.undo_stack = []
             self._auto_save()
             return True
@@ -137,6 +141,9 @@ class GameEngine:
                     ChatMessage.model_validate(m)
                     for m in data.get("chat_log", [])
                 ]
+                # Re-apply printing preferences so saved art choices survive restarts
+                for card in self.state.cards.values():
+                    self._apply_printing_pref(card)
             except Exception:
                 # Corrupted save - start fresh
                 self.state = GameState()
@@ -161,6 +168,16 @@ class GameEngine:
         except OSError:
             # Fallback: direct write (better than no save at all)
             SAVE_PATH.write_text(data, encoding="utf-8")
+
+    @staticmethod
+    def _apply_printing_pref(card: CardState) -> None:
+        """Apply saved printing preference to a card (in-place)."""
+        pref = get_preference(card.name)
+        if pref:
+            card.scryfall_id = pref["scryfall_id"]
+            card.image_uri = pref["image_uri"]
+            if pref.get("large_image_uri"):
+                card.large_image_uri = pref["large_image_uri"]
 
     # ------------------------------------------------------------------
     # State access
@@ -646,6 +663,8 @@ class GameEngine:
             image_uri=action.get("image_uri") or None,
             large_image_uri=action.get("large_image_uri") or None,
         )
+        # Apply saved printing preference (e.g. preferred Treasure/Food art)
+        self._apply_printing_pref(token)
         self.state.cards[token_id] = token
         # Summoning sickness for creature tokens (unless haste)
         is_creature = "Creature" in (type_line or "")
@@ -687,6 +706,7 @@ class GameEngine:
             back_face=card_data.get("back_face"),
             related_tokens=card_data.get("related_tokens", []),
         )
+        self._apply_printing_pref(card)
         self.state.cards[card_id] = card
         found = "found" if card_data else "not found in Scryfall"
         self._log_action("add_card", f"{player.name} added {card.name} to {zone} ({found})")
@@ -986,6 +1006,8 @@ class GameEngine:
             is_token=True,
             is_conjured=True,
         )
+        # Apply saved printing preference (e.g. preferred Treasure/Food art)
+        self._apply_printing_pref(card)
         self.state.cards[card_id] = card
         # Summoning sickness for creature tokens (unless haste)
         is_creature = "Creature" in (card.type_line or "")

@@ -219,6 +219,48 @@ button {
     color: var(--text-primary);
 }
 
+/* Hide-hand toggle in opponent label */
+.hide-hand-toggle {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+}
+.hide-hand-toggle input { margin: 0; cursor: pointer; }
+
+/* Hidden hand card: card-back with large number */
+.hidden-hand-card {
+    width: var(--card-width);
+    height: var(--card-height);
+    background: linear-gradient(135deg, #3a1f5d 0%, #1a1040 50%, #3a1f5d 100%);
+    border-radius: var(--radius-md);
+    border: 1px solid #5a3d7a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    position: relative;
+    box-shadow: var(--shadow-card);
+}
+.hidden-hand-card::before {
+    content: '';
+    position: absolute;
+    top: 4px; left: 4px; right: 4px; bottom: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    background: radial-gradient(ellipse at center, rgba(100, 60, 140, 0.3) 0%, transparent 70%);
+}
+.hidden-hand-number {
+    font-size: 28px;
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.5);
+    z-index: 1;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
 .untap-all-btn {
     padding: 2px 8px;
     font-size: 11px;

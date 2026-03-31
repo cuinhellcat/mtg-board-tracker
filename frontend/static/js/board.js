@@ -821,8 +821,13 @@
         var container = zoneEl.querySelector('.zone-cards');
         if (!container) return;
 
-        // Preserve scroll position across re-render
+        // Preserve scroll positions across re-render (outer + each subzone)
         var savedScrollTop = container.scrollTop;
+        var savedSubzoneScrolls = {};
+        container.querySelectorAll('.subzone-cards').forEach(function (sub) {
+            var group = sub.closest('[data-battlefield-group]');
+            if (group) savedSubzoneScrolls[group.dataset.battlefieldGroup] = sub.scrollTop;
+        });
 
         // Filter out cards that are attached to another card (they appear as badges)
         var visibleCards = cards.filter(function (c) { return !c.attached_to; });
@@ -887,8 +892,14 @@
         var creaturesDiv = makeSubzone('bf-group bf-creatures', 'Creatures', 'creature', creatures);
         container.appendChild(creaturesDiv);
 
-        // Restore scroll position
+        // Restore scroll positions (outer + each subzone)
         container.scrollTop = savedScrollTop;
+        container.querySelectorAll('.subzone-cards').forEach(function (sub) {
+            var group = sub.closest('[data-battlefield-group]');
+            if (group && savedSubzoneScrolls[group.dataset.battlefieldGroup]) {
+                sub.scrollTop = savedSubzoneScrolls[group.dataset.battlefieldGroup];
+            }
+        });
     }
 
     /**
@@ -953,15 +964,24 @@
 
         container.innerHTML = '';
 
-        if (playerIndex === 0) {
-            // Opponent hand: show card backs (can still drag them for manual tracking)
-            handCards.forEach(function (card) {
-                // Show as actual cards since this is a board state tracker, not a hidden info game.
-                // The user manually manages both sides.
-                container.appendChild(createCardElement(card));
+        // LLM hand (player 1): optionally show as numbered card backs
+        var hideOpponentHand = playerIndex === 1 &&
+            document.getElementById('hide-opponent-hand') &&
+            document.getElementById('hide-opponent-hand').checked;
+
+        if (hideOpponentHand) {
+            handCards.forEach(function (card, idx) {
+                var back = document.createElement('div');
+                back.className = 'hidden-hand-card';
+                back.innerHTML = '<span class="hidden-hand-number">' + (idx + 1) + '</span>';
+                // Still allow drag for manual tracking
+                back.dataset.cardId = card.id;
+                back.dataset.zone = 'hand';
+                back.dataset.playerIndex = String(playerIndex);
+                DragDrop.makeCardDraggable(back);
+                container.appendChild(back);
             });
         } else {
-            // Human hand: show all cards
             handCards.forEach(function (card) {
                 container.appendChild(createCardElement(card));
             });
@@ -2948,6 +2968,16 @@
        ================================================================== */
 
     function bindEvents() {
+        // Hide-opponent-hand toggle (persisted in localStorage)
+        var hideHandCb = document.getElementById('hide-opponent-hand');
+        if (hideHandCb) {
+            hideHandCb.checked = localStorage.getItem('hideOpponentHand') !== 'false';
+            hideHandCb.addEventListener('change', function () {
+                localStorage.setItem('hideOpponentHand', hideHandCb.checked);
+                scheduleRender();
+            });
+        }
+
         // Dismiss context menus on click elsewhere
         document.addEventListener('click', function (e) {
             // Check if click is inside a context menu
