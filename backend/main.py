@@ -27,7 +27,7 @@ from backend.scryfall import (
     update_cache,
 )
 from backend.decklist import parse_decklist
-from backend.snapshot import generate_bot_hand, generate_snapshot
+from backend.snapshot import generate_bot_hand, generate_mulligan_prompt, generate_snapshot
 from backend.printing_prefs import get_preference, set_preference
 from backend.deck_storage import list_decks, save_deck, load_deck, delete_deck
 
@@ -577,6 +577,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 number_hand = action.get("number_hand", False)
                 hand_text = generate_bot_hand(engine.state, oracle_mode=oracle_mode, number_hand=number_hand)
                 await websocket.send_json({"type": "bot_hand", "text": hand_text})
+                continue
+
+            if action_type == "get_mulligan_prompt":
+                oracle_mode = action.get("oracle_mode", "off")
+                text = generate_mulligan_prompt(engine.state, oracle_mode=oracle_mode)
+                await websocket.send_json({"type": "mulligan_prompt", "text": text})
                 continue
 
             # Dispatch the action

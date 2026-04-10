@@ -440,7 +440,9 @@ class GameEngine:
             player = self._get_player(card.owner_index)
             player.commander_taxes[card.name] = player.commander_taxes.get(card.name, 0) + 2
 
-        self._log_action("move_card", f"Moved {old_name} from {from_zone} to {to_zone}")
+        is_land_play = from_zone == "hand" and to_zone == "battlefield" and "Land" in (card.type_line or "")
+        log_type = "play_land" if is_land_play else "move_card"
+        self._log_action(log_type, f"Moved {old_name} from {from_zone} to {to_zone}")
         return {"ok": True}
 
     def _handle_tap_toggle(self, action: dict) -> dict:
@@ -1216,6 +1218,15 @@ class GameEngine:
             self._move_to_zone(library[i], "hand")
 
         self._log_action("mulligan", f"{player.name} took a mulligan (drew 7 new cards)")
+
+        # Re-freeze LLM hand order after mulligan
+        if player_index == 1:
+            llm_hand = sorted(
+                [c for c in self.state.cards.values() if c.zone == "hand" and c.owner_index == 1],
+                key=lambda c: c.zone_moved_at or 0,
+            )
+            self.state.frozen_hand_order = [c.id for c in llm_hand]
+
         return {"ok": True}
 
     def _handle_bottom_card(self, action: dict) -> dict:

@@ -53,7 +53,12 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLifeCounters(state);
         renderActionLog(state.action_log || []);
         renderTurnInfo(state);
-        if (state.turn > 1) document.getElementById('copy-bot-hand').classList.remove('btn-blink');
+        if (state.turn > 1 || botHandBtnClicked) {
+            document.getElementById('copy-bot-hand').classList.remove('btn-blink');
+        }
+        if (state.turn > 1 || mulliganBtnClicked) {
+            document.getElementById('copy-mulligan-prompt').classList.remove('btn-blink');
+        }
         // Request updated snapshot
         requestSnapshot();
     });
@@ -300,7 +305,8 @@ document.addEventListener('DOMContentLoaded', () => {
         logEntries.forEach((entry) => {
             const time = entry.timestamp ? MTGUtils.formatTime(entry.timestamp) : '';
             const desc = formatLogEntry(entry);
-            html += '<div class="log-entry">';
+            const cls = entry.type === 'play_land' ? 'log-entry log-entry-land' : 'log-entry';
+            html += '<div class="' + cls + '">';
             html += '<span class="log-time">' + time + '</span>';
             html += '<span class="log-action">' + desc + '</span>';
             html += '</div>';
@@ -389,13 +395,47 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const copyBotHandBtn = document.getElementById('copy-bot-hand');
+    let botHandBtnClicked = false;
     copyBotHandBtn.addEventListener('click', () => {
         pendingBotHandCopy = true;
+        botHandBtnClicked = true;
         copyBotHandBtn.classList.remove('btn-blink');
         MTGSocket.send({
             action: 'get_bot_hand',
             oracle_mode: oracleModeEl.value,
             number_hand: localStorage.getItem('hideOpponentHand') !== 'false'
+        });
+    });
+
+    // ================================================================
+    // Mulligan Prompt
+    // ================================================================
+
+    let pendingMulliganPrompt = false;
+
+    MTGSocket.on('mulligan_prompt', (data) => {
+        if (!pendingMulliganPrompt) return;
+        pendingMulliganPrompt = false;
+        const text = data.text || '';
+        navigator.clipboard.writeText(text).then(() => {
+            showCopyToast();
+        }).catch(() => {
+            snapshotTextEl.value = text;
+            snapshotTextEl.select();
+            document.execCommand('copy');
+            showCopyToast();
+        });
+    });
+
+    const copyMulliganBtn = document.getElementById('copy-mulligan-prompt');
+    let mulliganBtnClicked = false;
+    copyMulliganBtn.addEventListener('click', () => {
+        pendingMulliganPrompt = true;
+        mulliganBtnClicked = true;
+        copyMulliganBtn.classList.remove('btn-blink');
+        MTGSocket.send({
+            action: 'get_mulligan_prompt',
+            oracle_mode: oracleModeEl.value
         });
     });
 

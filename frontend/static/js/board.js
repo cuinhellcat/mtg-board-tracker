@@ -1690,10 +1690,7 @@
                 break;
 
             case 'scry':
-                var count = prompt('Scry how many cards?', '1');
-                if (count && parseInt(count, 10) > 0) {
-                    MTGSocket.send({ action: 'scry', player_index: pi, count: parseInt(count, 10) });
-                }
+                openScryDialog(pi);
                 break;
 
             case 'search_library':
@@ -1763,6 +1760,55 @@
         });
         document.getElementById('mill-confirm').addEventListener('click', doMill);
         document.getElementById('mill-cancel').addEventListener('click', cleanup);
+    }
+
+    function openScryDialog(playerIndex) {
+        var dialog = document.getElementById('scry-dialog');
+        var input = document.getElementById('scry-count');
+        input.value = '1';
+        dialog.style.display = '';
+        input.focus();
+        input.select();
+
+        var minusBtn = document.getElementById('scry-minus');
+        var plusBtn = document.getElementById('scry-plus');
+        var confirmBtn = document.getElementById('scry-dialog-confirm');
+        var cancelBtn = document.getElementById('scry-dialog-cancel');
+
+        function cleanup() {
+            dialog.style.display = 'none';
+            minusBtn.replaceWith(minusBtn.cloneNode(true));
+            plusBtn.replaceWith(plusBtn.cloneNode(true));
+            confirmBtn.replaceWith(confirmBtn.cloneNode(true));
+            cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+            input.removeEventListener('keydown', onKeydown);
+        }
+
+        function doScry() {
+            var count = parseInt(input.value, 10);
+            if (count > 0) {
+                MTGSocket.send({ action: 'scry', player_index: playerIndex, count: count });
+            }
+            cleanup();
+        }
+
+        function onKeydown(e) {
+            if (e.key === 'Enter') { e.preventDefault(); doScry(); }
+            else if (e.key === 'Escape') { cleanup(); }
+        }
+
+        input.addEventListener('keydown', onKeydown);
+
+        document.getElementById('scry-minus').addEventListener('click', function () {
+            var v = parseInt(input.value, 10) || 1;
+            if (v > 1) input.value = v - 1;
+        });
+        document.getElementById('scry-plus').addEventListener('click', function () {
+            var v = parseInt(input.value, 10) || 0;
+            input.value = v + 1;
+        });
+        document.getElementById('scry-dialog-confirm').addEventListener('click', doScry);
+        document.getElementById('scry-dialog-cancel').addEventListener('click', cleanup);
     }
 
     function copyLibraryToClipboard(playerIndex) {
@@ -2569,6 +2615,10 @@
         document.getElementById('zone-viewer-title').textContent = title;
         document.getElementById('zv-destination').style.display = 'none';
 
+        // Clear and focus search
+        var searchEl = document.getElementById('zv-search');
+        searchEl.value = '';
+
         var grid = document.getElementById('zone-viewer-list');
         grid.innerHTML = '';
 
@@ -2905,6 +2955,19 @@
         return text.replace(/\s*\([^()]*\)/g, '').trim();
     }
 
+    function formatBackFace(card) {
+        if (card.layout !== 'modal_dfc' || !card.back_face) return '';
+        var bf = card.back_face;
+        if (!bf.name) return '';
+        var bfParts = [bf.name];
+        if (bf.type_line) bfParts.push('[' + bf.type_line + ']');
+        if (bf.oracle_text && !SCRY_ORACLE_SKIP.has(bf.name)) {
+            var bfOracle = stripReminderText(bf.oracle_text.replace(/\n/g, ' / '));
+            if (bfOracle) bfParts.push('-- ' + bfOracle);
+        }
+        return ' // Back: ' + bfParts.join(' ');
+    }
+
     function copyScryCards() {
         var allCards = scryZones.top.concat(scryZones.bottom).concat(scryZones.graveyard);
         if (!allCards.length) return;
@@ -2917,7 +2980,7 @@
                 var oracle = stripReminderText(card.oracle_text.replace(/\n/g, ' / '));
                 if (oracle) parts.push('-- ' + oracle);
             }
-            lines.push('  - ' + parts.join(' '));
+            lines.push('  - ' + parts.join(' ') + formatBackFace(card));
         });
         navigator.clipboard.writeText(lines.join('\n')).catch(function () {});
         var btn = document.getElementById('scry-copy');
@@ -2935,6 +2998,7 @@
 
         document.getElementById('scry-modal').style.display = 'none';
         scryZones = { top: [], bottom: [], graveyard: [] };
+        _isDragging = false;
     }
 
     /* ==================================================================
@@ -3192,6 +3256,15 @@
             hideZoneViewer();
         });
 
+        // Zone viewer search filter
+        document.getElementById('zv-search').addEventListener('input', function () {
+            var q = this.value.toLowerCase();
+            document.querySelectorAll('#zone-viewer-list .zv-item').forEach(function (item) {
+                var name = (item.querySelector('.zv-label') || {}).textContent || '';
+                item.style.display = name.toLowerCase().includes(q) ? '' : 'none';
+            });
+        });
+
         // Zone viewer destination buttons
         document.querySelectorAll('.zv-dest-buttons .btn').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -3223,6 +3296,7 @@
                 hideSearchModal();
                 hidePrintingModal();
                 document.getElementById('scry-modal').style.display = 'none';
+                _isDragging = false;
                 cancelLinkExileMode();
             }
 
@@ -3312,6 +3386,7 @@
         // Hide hover preview during drag-and-drop
         document.addEventListener('dragstart', function () { _isDragging = true; hideCardPreview(); });
         document.addEventListener('dragend',   function () { _isDragging = false; });
+        document.addEventListener('drop',      function () { _isDragging = false; });
 
         // Set up static UI interactions
         setupLifeCounters();

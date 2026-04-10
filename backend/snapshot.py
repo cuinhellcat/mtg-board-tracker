@@ -17,8 +17,16 @@ BASIC_LANDS = {"Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes",
 
 # Cards whose oracle text is trivial / universally known — skip in snapshot
 ORACLE_SKIP = BASIC_LANDS | {
+    # Standard artifact tokens
     "Treasure", "Food", "Clue", "Blood", "Gold",
     "Map", "Powerstone", "Junk", "Shard", "Incubator",
+    # Universally known lands
+    "Command Tower", "Exotic Orchard", "Path of Ancestry",
+    "Mana Confluence", "City of Brass", "Reflecting Pool",
+    "Evolving Wilds", "Terramorphic Expanse", "Fabled Passage", "Prismatic Vista",
+    "Reliquary Tower",
+    # Universally known artifacts
+    "Arcane Signet", "Sol Ring",
 }
 
 # Regex: matches simple unconditional "{T}: Add {X}" or "{T}: Add {X} or {Y}" etc.
@@ -134,7 +142,7 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
                 prefix = f"Handkarte{idx}: "
             else:
                 prefix = ""
-            lines.append(f"  - {prefix}{_format_card_full(card)}")
+            lines.append(f"  - {prefix}{_format_card_full(card)}{_format_back_face(card)}")
     else:
         lines.append("  (empty)")
     lines.append("")
@@ -153,7 +161,7 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     lines.append("Graveyard:")
     if llm_graveyard:
         for card in llm_graveyard:
-            lines.append(f"  - {_format_card_brief(card)}")
+            lines.append(f"  - {_format_card_brief(card)}{_format_back_face(card)}")
     else:
         lines.append("  (empty)")
     lines.append("")
@@ -202,7 +210,7 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     lines.append("Graveyard:")
     if human_graveyard:
         for card in human_graveyard:
-            lines.append(f"  - {_format_card_full(card)}")
+            lines.append(f"  - {_format_card_full(card)}{_format_back_face(card)}")
     else:
         lines.append("  (empty)")
     lines.append("")
@@ -333,6 +341,33 @@ def _format_card_full(card: CardState) -> str:
         parts.append("-- " + ", ".join(annotations))
 
     return " ".join(parts)
+
+
+def _format_back_face(card: CardState) -> str:
+    """Format back-face info for MDFCs and split/aftermath cards.
+    Returns empty string if card has no back face or layout doesn't warrant it."""
+    if card.layout not in ("modal_dfc", "split", "aftermath") or not card.back_face:
+        return ""
+    bf = card.back_face
+    bf_name = bf.get("name", "")
+    if not bf_name:
+        return ""
+    bf_parts = [bf_name]
+    bf_type = bf.get("type_line", "")
+    if bf_type:
+        bf_parts.append(f"[{bf_type}]")
+    bf_oracle = bf.get("oracle_text", "")
+    if bf_oracle:
+        bf_oracle = bf_oracle.replace("\n", " / ")
+        if _oracle_mode == "reduced":
+            skip = bf_name in ORACLE_SKIP
+            if not skip:
+                bf_oracle = _strip_reminder_text(bf_oracle)
+            else:
+                bf_oracle = ""
+        if bf_oracle:
+            bf_parts.append(f"-- {bf_oracle}")
+    return " // Back: " + " ".join(bf_parts)
 
 
 def _format_card_brief(card: CardState) -> str:
@@ -659,10 +694,52 @@ def generate_bot_hand(game_state: GameState, oracle_mode: str = "off", number_ha
                 prefix = f"Handkarte{idx}: "
             else:
                 prefix = ""
-            lines.append(f"  - {prefix}{_format_card_full(card)}")
+            lines.append(f"  - {prefix}{_format_card_full(card)}{_format_back_face(card)}")
             card.show_oracle_text = orig
     else:
         lines.append("  (empty)")
+
+    _oracle_mode = "off"
+    return "\n".join(lines)
+
+
+def generate_mulligan_prompt(game_state: GameState, oracle_mode: str = "off") -> str:
+    """Generate a mulligan decision prompt: commander info + hand + question."""
+    global _oracle_mode
+    if len(game_state.players) < 2:
+        return "(No game in progress)"
+
+    _oracle_mode = oracle_mode
+    llm_index = 1
+    llm_player = game_state.players[llm_index]
+
+    lines: List[str] = []
+
+    # Find LLM's commanders
+    commanders = [
+        c for c in game_state.cards.values()
+        if c.is_commander and c.owner_index == llm_index
+    ]
+    if commanders:
+        for cmd in commanders:
+            oracle = cmd.oracle_text or ""
+            if oracle and oracle_mode == "reduced":
+                oracle = _strip_reminder_text(oracle)
+            oracle_part = f" -- {oracle.replace(chr(10), ' / ')}" if oracle else ""
+            lines.append(f"Das ist dein Commander: {cmd.name} {cmd.mana_cost} [{cmd.type_line}]{oracle_part}")
+        lines.append("")
+
+    # Hand cards (always with oracle in reduced style)
+    hand_cards = _get_zone_cards(game_state, llm_index, "hand")
+    lines.append(f"Das ist deine Starthand ({len(hand_cards)} Karten):")
+    for card in hand_cards:
+        orig = card.show_oracle_text
+        card.show_oracle_text = oracle_mode != "off"
+        lines.append(f"  - {_format_card_full(card)}{_format_back_face(card)}")
+        card.show_oracle_text = orig
+
+    lines.append("")
+    lines.append("Ich spiele gegen dich Commander. Das ist deine Starthand. Machst du einen Mulligan? Nur die Entscheidung. Ohne Begründung. Ich bin dein Gegner. Verrate mir nicht, wieso du behältst oder Mulligan machen willst. Nur die Entscheidung bitte: Mulligan oder Behalten?")
 
     _oracle_mode = "off"
     return "\n".join(lines)

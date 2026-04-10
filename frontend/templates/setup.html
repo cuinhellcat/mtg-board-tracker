@@ -483,7 +483,7 @@
             <h2>Game Settings</h2>
             <div class="form-group">
                 <label for="starting-life">Starting Life Total</label>
-                <input type="number" id="starting-life" value="20" min="1" max="100" style="width: 100px;">
+                <input type="number" id="starting-life" value="20" min="1" max="100" style="width: 100px;" oninput="localStorage.setItem('setup-starting-life', this.value)">
             </div>
             <div class="form-group">
                 <label>First Player</label>
@@ -512,6 +512,12 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
+        // ---- Restore starting life from last session ----
+        const savedLife = localStorage.getItem('setup-starting-life');
+        if (savedLife) {
+            document.getElementById('starting-life').value = savedLife;
+        }
+
         // ---- State ----
         let scryfallReady = false;
         let deck1Parsed = false;

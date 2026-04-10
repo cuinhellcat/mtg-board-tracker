@@ -1804,6 +1804,22 @@ button {
     max-height: 85vh;
 }
 
+.zv-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 10px;
+    margin-bottom: 10px;
+    background: var(--bg-input, #2a2a3a);
+    border: 1px solid var(--border-color, #444);
+    border-radius: 4px;
+    color: var(--text-primary, #eee);
+    font-size: 13px;
+}
+.zv-search-input:focus {
+    outline: none;
+    border-color: var(--accent, #7b8cde);
+}
+
 .zone-viewer-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));

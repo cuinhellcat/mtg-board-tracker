@@ -383,6 +383,7 @@
     <div id="zone-viewer-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content zone-viewer-content">
             <h3 id="zone-viewer-title">Zone</h3>
+            <input type="text" id="zv-search" class="zv-search-input" placeholder="Search..." autocomplete="off">
             <div class="zone-viewer-grid" id="zone-viewer-list"></div>
             <div class="zone-viewer-destination" id="zv-destination" style="display: none;">
                 <p>Send <strong id="zv-selected-name"></strong> to:</p>
@@ -425,6 +426,22 @@
             <div id="card-picker-results" class="card-picker-results"></div>
             <div class="modal-actions">
                 <button id="card-picker-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ SCRY DIALOG ============ -->
+    <div id="scry-dialog" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="width: 220px; text-align: center;">
+            <h3 style="margin: 0 0 12px;">Scry / Surveil</h3>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+                <button id="scry-minus" class="btn btn-secondary" style="width: 36px; height: 36px; font-size: 1.2em; padding: 0;">−</button>
+                <input type="number" id="scry-count" value="1" min="1" style="width: 50px; text-align: center; font-size: 1.1em; padding: 4px;">
+                <button id="scry-plus" class="btn btn-secondary" style="width: 36px; height: 36px; font-size: 1.2em; padding: 0;">+</button>
+            </div>
+            <div class="modal-actions" style="margin-top: 12px;">
+                <button id="scry-dialog-confirm" class="btn btn-primary">Scry</button>
+                <button id="scry-dialog-cancel" class="btn btn-secondary">Cancel</button>
             </div>
         </div>
     </div>
