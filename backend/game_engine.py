@@ -7,6 +7,7 @@ import atexit
 import json
 import random
 import tempfile
+import time
 import uuid
 import copy
 from datetime import datetime, timezone
@@ -150,24 +151,43 @@ class GameEngine:
                 self.chat_log = []
 
     def _auto_save(self):
-        """Persist current state to disk (atomic write to prevent corruption)."""
+        """Persist current state to disk (atomic write, OneDrive-tolerant).
+
+        Why: OneDrive periodically grabs files for sync and briefly denies
+        write access. A transient PermissionError here must not kill the
+        WebSocket loop — auto-save is best-effort.
+        """
         SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "state": self.state.model_dump(),
             "chat_log": [m.model_dump() for m in self.chat_log],
         }
         data = json.dumps(payload, indent=2)
-        # Write to temp file first, then rename — prevents half-written saves
-        try:
-            fd, tmp_path = tempfile.mkstemp(
-                dir=SAVE_PATH.parent, suffix=".tmp", prefix="save_"
-            )
-            with open(fd, "w", encoding="utf-8") as f:
-                f.write(data)
-            Path(tmp_path).replace(SAVE_PATH)
-        except OSError:
-            # Fallback: direct write (better than no save at all)
-            SAVE_PATH.write_text(data, encoding="utf-8")
+
+        tmp_path = None
+        last_err = None
+        for attempt in range(5):
+            try:
+                fd, tmp_path = tempfile.mkstemp(
+                    dir=SAVE_PATH.parent, suffix=".tmp", prefix="save_"
+                )
+                with open(fd, "w", encoding="utf-8") as f:
+                    f.write(data)
+                Path(tmp_path).replace(SAVE_PATH)
+                return
+            except PermissionError as e:
+                last_err = e
+                if tmp_path:
+                    try:
+                        Path(tmp_path).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                time.sleep(0.1 * (attempt + 1))
+            except OSError as e:
+                last_err = e
+                break
+
+        print(f"[auto_save] WARN: save failed after retries: {last_err}", flush=True)
 
     @staticmethod
     def _apply_printing_pref(card: CardState) -> None:
