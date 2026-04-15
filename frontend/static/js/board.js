@@ -197,7 +197,11 @@
                 fetch(url)
                     .then(function (r) { return r.json(); })
                     .then(function (data) {
-                        _pickerRenderResults(data.results || []);
+                        var results = data.results || [];
+                        if (isToken) {
+                            results.forEach(function (r) { r._fromTokenSearch = true; });
+                        }
+                        _pickerRenderResults(results);
                     });
             }, 150);
         });
@@ -1862,7 +1866,7 @@
                 var addZone = actionType === 'bf_add_card_hand' ? 'hand' : 'battlefield';
                 var addPi = pi;
                 openCardPicker('Karte hinzufügen — Name suchen', function (card) {
-                    var isToken = card.type_line && card.type_line.toLowerCase().indexOf('token') !== -1;
+                    var isToken = card._fromTokenSearch || (card.type_line && card.type_line.toLowerCase().indexOf('token') !== -1);
                     if (isToken) {
                         MTGSocket.send({
                             action: 'create_token',
