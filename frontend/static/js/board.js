@@ -3336,6 +3336,12 @@
         el.className = 'connection-status disconnected';
         el.id = 'connection-status';
         el.textContent = 'Disconnected';
+        el.title = 'Click to reconnect';
+        el.addEventListener('click', function () {
+            if (window.MTGSocket && !window.MTGSocket.isConnected()) {
+                window.MTGSocket.connect();
+            }
+        });
         document.body.appendChild(el);
         return el;
     }
@@ -3346,9 +3352,11 @@
         if (window.MTGSocket && window.MTGSocket.isConnected()) {
             el.className = 'connection-status connected';
             el.textContent = 'Connected';
+            el.style.cursor = 'default';
         } else {
             el.className = 'connection-status disconnected';
-            el.textContent = 'Disconnected';
+            el.textContent = 'Disconnected — click to reconnect';
+            el.style.cursor = 'pointer';
         }
     }
 

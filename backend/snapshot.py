@@ -40,6 +40,19 @@ _REMINDER_RE = re.compile(r"\s*\([^()]*\)")
 # Current oracle mode for snapshot rendering (set per-request)
 _oracle_mode = "off"
 
+# LLM player index for this snapshot run (set per-request) — used to label commanders
+# from the LLM's perspective ("dein" vs "des Gegners").
+_llm_index = 1
+
+
+def _commander_tag(card: CardState) -> str:
+    """Return a prominent commander annotation, perspective-aware."""
+    if not card.is_commander:
+        return ""
+    if card.owner_index == _llm_index:
+        return " *** Diese Karte ist dein Commander ***"
+    return " *** Diese Karte ist der Commander des Gegners ***"
+
 
 def _strip_reminder_text(text: str) -> str:
     """Remove reminder text (parenthesised clauses) from oracle text."""
@@ -80,8 +93,10 @@ def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", 
 
 
 def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str, recent_actions_count: int, number_hand: bool = False) -> str:
+    global _llm_index
     llm_index = 1
     human_index = 0
+    _llm_index = llm_index
     llm_player = game_state.players[llm_index]
     human_player = game_state.players[human_index]
 
@@ -340,7 +355,8 @@ def _format_card_full(card: CardState) -> str:
     if annotations:
         parts.append("-- " + ", ".join(annotations))
 
-    return " ".join(parts)
+    result = " ".join(parts)
+    return result + _commander_tag(card)
 
 
 def _format_back_face(card: CardState) -> str:
@@ -408,7 +424,8 @@ def _format_card_brief(card: CardState) -> str:
     if card.note:
         parts.append(f"-- NOTE: {card.note}")
 
-    return " ".join(parts)
+    result = " ".join(parts)
+    return result + _commander_tag(card)
 
 
 def _extract_simple_mana(card: CardState) -> Optional[str]:

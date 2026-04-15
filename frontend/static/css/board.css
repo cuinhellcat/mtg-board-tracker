@@ -2341,8 +2341,17 @@ button {
 }
 
 .connection-status.disconnected {
-    background: rgba(233, 69, 96, 0.2);
-    color: var(--accent);
+    background: rgba(233, 69, 96, 0.9);
+    color: #fff;
+    font-size: 13px;
+    padding: 6px 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    animation: connStatusPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes connStatusPulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
 }
 
 /* ========== CARD INVENTORY PANEL ========== */

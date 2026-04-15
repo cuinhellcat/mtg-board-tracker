@@ -125,7 +125,7 @@ async def update_cache(progress_callback=None) -> Dict[str, Any]:
         cards = {}
         tokens = {}
         for card in raw_data:
-            is_token = card.get("layout") in ("token",)
+            is_token = card.get("layout") in ("token", "emblem")
 
             # Skip art_series entirely
             if card.get("layout") in ("art_series",):

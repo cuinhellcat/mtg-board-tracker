@@ -64,15 +64,8 @@ window.MTGSocket = (function () {
         ws.onclose = () => {
             console.log('WebSocket disconnected');
             handlers.close.forEach(cb => cb());
-            if (serverShutdown) return;
-            // Auto-reconnect every 2 seconds
-            if (!reconnectInterval) {
-                reconnectInterval = setInterval(() => {
-                    if (!ws || ws.readyState === WebSocket.CLOSED) {
-                        connect();
-                    }
-                }, 2000);
-            }
+            // No auto-reconnect — UI shows a clickable "Reconnect" indicator
+            // so the user consciously notices disconnects (see board.js connection-status).
         };
 
         ws.onerror = (err) => {

@@ -5,13 +5,26 @@ Entry point for the MTG Duel Commander Board State Tracker backend.
 
 import asyncio
 import json
+import traceback
 from pathlib import Path
 from typing import Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 from starlette.templating import Jinja2Templates
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """StaticFiles that tells the browser never to cache — prevents stale JS/CSS after updates."""
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if isinstance(response, Response):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
 from backend.game_engine import GameEngine
 from backend.scryfall import (
@@ -35,8 +48,8 @@ BASE_DIR = Path(__file__).parent.parent
 
 app = FastAPI(title="MTG Board State Tracker", version="1.0.0")
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "frontend" / "static")), name="static")
+# Mount static files — /static uses no-cache (dev code), /cache keeps default caching (images)
+app.mount("/static", NoCacheStaticFiles(directory=str(BASE_DIR / "frontend" / "static")), name="static")
 app.mount("/cache", StaticFiles(directory=str(BASE_DIR / "cache")), name="cache")
 
 # Templates
@@ -621,7 +634,14 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception:
-        pass
+        print("=" * 60, flush=True)
+        print("!!! WebSocket loop crashed — closing socket !!!", flush=True)
+        traceback.print_exc()
+        print("=" * 60, flush=True)
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
     finally:
         connected_clients.discard(websocket)
 
