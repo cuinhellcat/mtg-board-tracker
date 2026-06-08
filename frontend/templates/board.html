@@ -17,10 +17,11 @@
             </div>
         </div>
 
-        <!-- ============ OPPONENT (Player 1 / LLM) - TOP HALF ============ -->
+        <!-- ============ OPPONENT (switchable) - TOP HALF ============ -->
         <div id="player-top" class="player-half player-top" data-player-index="1">
             <div class="player-label">
                 <span class="player-name-display" id="player-top-name">Opponent</span>
+                <span class="top-switch" id="top-switch-buttons"></span>
                 <label class="hide-hand-toggle" title="Handkarten des Gegners verbergen">
                     <input type="checkbox" id="hide-opponent-hand"> Hand verbergen
                 </label>
@@ -29,14 +30,14 @@
             <div class="player-zones">
                 <!-- Left sidebar: Library (outer/next to hand) + Command Zone (inner/next to battlefield) -->
                 <div class="side-column side-left">
-                    <div class="zone zone-library" data-zone="library" data-player-index="1" id="zone-library-1">
+                    <div class="zone zone-library" data-zone="library" data-player-index="1" id="zone-library-top">
                         <div class="zone-label">Library</div>
                         <div class="library-icon">
                             <div class="library-card-back"></div>
-                            <span class="library-count" id="lib-count-1">0</span>
+                            <span class="library-count" id="lib-count-top">0</span>
                         </div>
                     </div>
-                    <div class="zone zone-command" data-zone="command_zone" data-player-index="1" id="zone-command-1">
+                    <div class="zone zone-command" data-zone="command_zone" data-player-index="1" id="zone-command-top">
                         <div class="zone-label">Command</div>
                         <div class="zone-cards"></div>
                     </div>
@@ -44,11 +45,11 @@
 
                 <!-- Main area: Hand (outer/top) + Battlefield (inner) -->
                 <div class="main-column">
-                    <div class="zone zone-hand" data-zone="hand" data-player-index="1" id="zone-hand-1">
-                        <div class="zone-label">Hand (<span class="hand-count" id="hand-count-1">0</span>)</div>
+                    <div class="zone zone-hand" data-zone="hand" data-player-index="1" id="zone-hand-top">
+                        <div class="zone-label">Hand (<span class="hand-count" id="hand-count-top">0</span>)</div>
                         <div class="zone-cards"></div>
                     </div>
-                    <div class="zone zone-battlefield" data-zone="battlefield" data-player-index="1" id="zone-battlefield-1">
+                    <div class="zone zone-battlefield" data-zone="battlefield" data-player-index="1" id="zone-battlefield-top">
                         <div class="zone-label">Battlefield</div>
                         <div class="zone-cards"></div>
                     </div>
@@ -56,12 +57,12 @@
 
                 <!-- Right sidebar: Graveyard + Exile -->
                 <div class="side-column side-right">
-                    <div class="zone zone-graveyard zone-stack" data-zone="graveyard" data-player-index="1" id="zone-graveyard-1">
-                        <div class="zone-label">GY (<span class="gy-count" id="gy-count-1">0</span>)</div>
+                    <div class="zone zone-graveyard zone-stack" data-zone="graveyard" data-player-index="1" id="zone-graveyard-top">
+                        <div class="zone-label">GY (<span class="gy-count" id="gy-count-top">0</span>)</div>
                         <div class="zone-cards"></div>
                     </div>
-                    <div class="zone zone-exile zone-stack" data-zone="exile" data-player-index="1" id="zone-exile-1">
-                        <div class="zone-label">Exile (<span class="ex-count" id="ex-count-1">0</span>)</div>
+                    <div class="zone zone-exile zone-stack" data-zone="exile" data-player-index="1" id="zone-exile-top">
+                        <div class="zone-label">Exile (<span class="ex-count" id="ex-count-top">0</span>)</div>
                         <div class="zone-cards"></div>
                     </div>
                 </div>
@@ -74,7 +75,7 @@
                 <div class="life-counter" id="life-counter-0" data-player-index="0">
                     <span class="life-player-name" id="life-name-0">P1</span>
                     <button class="life-btn life-minus" data-player-index="0" data-delta="-1">−</button>
-                    <span class="life-total" id="life-total-0">20</span>
+                    <span class="life-total" id="life-total-0" data-player-index="0">20</span>
                     <button class="life-btn life-plus" data-player-index="0" data-delta="1">+</button>
                     <div class="commander-damage-row" id="cmdr-dmg-0"></div>
                     <div class="extra-counters-row" id="extra-counters-0" data-player-index="0"></div>
@@ -115,6 +116,7 @@
                 <div class="phase-controls">
                     <button id="btn-next-phase" class="phase-nav-btn" title="Next Phase">→ Next</button>
                     <button id="btn-pass-turn" class="phase-nav-btn btn-pass" title="Pass Turn">Pass Turn</button>
+                    <button id="btn-phase-stopper-settings" class="phase-nav-btn" title="Phase-Stopper Listen verwalten" style="padding:4px 8px;">⚙</button>
                     <div class="card-size-control" title="Card Size">
                         <label for="card-size-slider" class="card-size-label">&#x1F0CF;</label>
                         <input type="range" id="card-size-slider" min="50" max="120" value="77" step="1">
@@ -142,13 +144,13 @@
             </div>
 
             <div class="middle-section life-section">
-                <div class="life-counter" id="life-counter-1" data-player-index="1">
-                    <span class="life-player-name" id="life-name-1">P2</span>
+                <div class="life-counter" id="life-counter-top" data-player-index="1">
+                    <span class="life-player-name" id="life-name-top">P2</span>
                     <button class="life-btn life-minus" data-player-index="1" data-delta="-1">−</button>
-                    <span class="life-total" id="life-total-1">20</span>
+                    <span class="life-total" id="life-total-top" data-player-index="1">20</span>
                     <button class="life-btn life-plus" data-player-index="1" data-delta="1">+</button>
-                    <div class="commander-damage-row" id="cmdr-dmg-1"></div>
-                    <div class="extra-counters-row" id="extra-counters-1" data-player-index="1"></div>
+                    <div class="commander-damage-row" id="cmdr-dmg-top"></div>
+                    <div class="extra-counters-row" id="extra-counters-top" data-player-index="1"></div>
                     <button class="add-counter-btn" data-player-index="1" title="Add counter">＋</button>
                 </div>
             </div>
@@ -511,6 +513,43 @@
             <p>Du kannst das Command Center jederzeit über das Tray-Icon unten rechts bei der Uhr per Rechtsklick erreichen.</p>
             <div class="modal-actions" style="justify-content: center;">
                 <button id="cc-hint-ok" class="btn btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ PHASE-STOPPER SETTINGS ============ -->
+    <div id="phase-stopper-settings-overlay" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 520px;">
+            <h3>⚙ Phase-Stopper verwalten</h3>
+            <p style="margin: 8px 0 4px 0; font-size: 13px; opacity: 0.85;">
+                Häkchen entfernen → Karte wird beim Pass-Turn nicht mehr gemeldet.
+                Neue Karte unten manuell eintragen — gilt dann ebenfalls als Trigger.
+            </p>
+            <div id="phase-stopper-settings-list" style="margin: 12px 0 8px 0; font-size: 13px; max-height: 50vh; overflow-y: auto;"></div>
+            <div style="display:flex; gap:6px; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1);">
+                <input id="phase-stopper-always-input" type="text" placeholder="Karte manuell hinzufügen…" style="flex:1; padding:4px 8px;" list="phase-stopper-datalist" autocomplete="off">
+                <datalist id="phase-stopper-datalist"></datalist>
+                <button id="phase-stopper-always-add" class="btn btn-sm btn-primary">+ Hinzufügen</button>
+            </div>
+            <div class="modal-actions" style="justify-content:flex-end; margin-top:12px;">
+                <button id="phase-stopper-settings-close" class="btn btn-secondary">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============ PASS-TURN TRIGGER WARNING ============ -->
+    <div id="pass-turn-modal-overlay" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="max-width: 520px;">
+            <h3>⏸ Upkeep- / Draw-Trigger erkannt</h3>
+            <p style="margin: 8px 0 4px 0; font-size: 13px; opacity: 0.85;">
+                Möchtest du in der entsprechenden Phase anhalten, um Trigger manuell aufzulösen?
+            </p>
+            <div id="pass-turn-modal-list" style="margin: 12px 0; font-size: 13px;"></div>
+            <div class="modal-actions" style="justify-content: flex-end; gap: 8px; flex-wrap: wrap;">
+                <button id="pass-turn-stop-upkeep" class="btn btn-primary">Bei Upkeep anhalten</button>
+                <button id="pass-turn-stop-draw" class="btn btn-primary">Bei Draw anhalten</button>
+                <button id="pass-turn-continue" class="btn btn-secondary">Direkt zur Main 1</button>
+                <button id="pass-turn-cancel" class="btn btn-secondary">Abbrechen</button>
             </div>
         </div>
     </div>

@@ -357,9 +357,47 @@
             <p>Set up a new game</p>
         </div>
 
+        <!-- Format Selection -->
+        <div class="setup-card">
+            <h2>1. Game Format</h2>
+            <div class="form-group">
+                <div class="radio-group">
+                    <label class="radio-option">
+                        <input type="radio" name="game-format" value="Commander" checked>
+                        <span>Commander</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="game-format" value="Tiny Leaders">
+                        <span>Tiny Leaders</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="starting-life">Starting Life Total</label>
+                <input type="number" id="starting-life" value="40" min="1" max="100" style="width: 100px;">
+            </div>
+            <div class="form-group">
+                <label>Spielmodus der Bots</label>
+                <div class="radio-group" style="flex-direction: column; align-items: flex-start; gap: 6px;">
+                    <label class="radio-option">
+                        <input type="radio" name="play-mode" value="competitive" checked>
+                        <span><strong>Kompetitiv</strong> — spielen auf Sieg, kennen keine Gnade.</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="play-mode" value="casual">
+                        <span><strong>Casual</strong> — Küchentisch: fokussieren den echten Threat, Deals &amp; Absprachen möglich.</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="play-mode" value="playtest">
+                        <span><strong>Playtest</strong> — greifen dich nur an, wenn du wirklich der größte Threat bist (Deck-Test).</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <!-- Scryfall Cache Status -->
         <div class="setup-card">
-            <h2>Card Database</h2>
+            <h2>2. Card Database</h2>
             <div class="scryfall-status">
                 <div class="scryfall-info" id="scryfall-info">Checking card database...</div>
                 <button class="btn btn-small" id="scryfall-btn" style="display: none;">Download</button>
@@ -374,7 +412,7 @@
 
         <!-- Player 1 Setup -->
         <div class="setup-card">
-            <h2>Player 1</h2>
+            <h2>3. Player 1 (You)</h2>
             <div class="form-group">
                 <label for="p1-name">Name</label>
                 <input type="text" id="p1-name" value="Andre" placeholder="Player name">
@@ -427,10 +465,10 @@
 
         <!-- Player 2 Setup -->
         <div class="setup-card">
-            <h2>Player 2</h2>
+            <h2>4. Player 2 (Bot)</h2>
             <div class="form-group">
                 <label for="p2-name">Name</label>
-                <input type="text" id="p2-name" value="Mia" placeholder="Player name">
+                <input type="text" id="p2-name" value="Lexi" placeholder="Player name">
             </div>
             <div class="form-group">
                 <label>Load Saved Deck</label>
@@ -478,13 +516,115 @@
             </div>
         </div>
 
-        <!-- Game Settings -->
+        <!-- Player 3 Setup -->
         <div class="setup-card">
-            <h2>Game Settings</h2>
+            <h2>5. Player 3 (Bot)</h2>
             <div class="form-group">
-                <label for="starting-life">Starting Life Total</label>
-                <input type="number" id="starting-life" value="20" min="1" max="100" style="width: 100px;" oninput="localStorage.setItem('setup-starting-life', this.value)">
+                <label for="p3-name">Name</label>
+                <input type="text" id="p3-name" value="Emma" placeholder="Player name">
             </div>
+            <div class="form-group">
+                <label>Load Saved Deck</label>
+                <div class="saved-deck-row">
+                    <select id="p3-saved-decks"><option value="">-- select --</option></select>
+                    <button class="btn btn-small" id="p3-load-btn" disabled>Load</button>
+                    <button class="btn btn-small btn-danger" id="p3-delete-btn" disabled title="Delete saved deck">Del</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Decklist</label>
+                <div class="deck-upload-area">
+                    <label class="file-upload-label">
+                        Upload .txt / .dec
+                        <input type="file" id="p3-file" accept=".txt,.dec,.dck,.mwDeck">
+                    </label>
+                    <span class="text-muted" style="font-size: 12px;">or paste below</span>
+                </div>
+                <textarea id="p3-deck" rows="8" placeholder="1 Sol Ring&#10;1 Command Tower&#10;1 Lightning Bolt&#10;..."></textarea>
+            </div>
+            <div class="form-row">
+                <button class="btn" id="p3-parse-btn">Parse Deck</button>
+            </div>
+            <div class="deck-result" id="p3-result"></div>
+            <div class="post-parse-section" id="p3-post-parse">
+                <div class="form-group">
+                    <label>Commander</label>
+                    <div class="commander-row">
+                        <select id="p3-commander"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Partner</label>
+                    <div class="commander-row">
+                        <select id="p3-partner"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Save Deck As</label>
+                    <div class="save-deck-row">
+                        <input type="text" id="p3-save-name" placeholder="Deck name...">
+                        <button class="btn btn-small" id="p3-save-btn">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player 4 Setup -->
+        <div class="setup-card">
+            <h2>6. Player 4 (Bot)</h2>
+            <div class="form-group">
+                <label for="p4-name">Name</label>
+                <input type="text" id="p4-name" value="Dainty" placeholder="Player name">
+            </div>
+            <div class="form-group">
+                <label>Load Saved Deck</label>
+                <div class="saved-deck-row">
+                    <select id="p4-saved-decks"><option value="">-- select --</option></select>
+                    <button class="btn btn-small" id="p4-load-btn" disabled>Load</button>
+                    <button class="btn btn-small btn-danger" id="p4-delete-btn" disabled title="Delete saved deck">Del</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Decklist</label>
+                <div class="deck-upload-area">
+                    <label class="file-upload-label">
+                        Upload .txt / .dec
+                        <input type="file" id="p4-file" accept=".txt,.dec,.dck,.mwDeck">
+                    </label>
+                    <span class="text-muted" style="font-size: 12px;">or paste below</span>
+                </div>
+                <textarea id="p4-deck" rows="8" placeholder="1 Sol Ring&#10;1 Command Tower&#10;1 Lightning Bolt&#10;..."></textarea>
+            </div>
+            <div class="form-row">
+                <button class="btn" id="p4-parse-btn">Parse Deck</button>
+            </div>
+            <div class="deck-result" id="p4-result"></div>
+            <div class="post-parse-section" id="p4-post-parse">
+                <div class="form-group">
+                    <label>Commander</label>
+                    <div class="commander-row">
+                        <select id="p4-commander"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Partner</label>
+                    <div class="commander-row">
+                        <select id="p4-partner"><option value="">-- none --</option></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Save Deck As</label>
+                    <div class="save-deck-row">
+                        <input type="text" id="p4-save-name" placeholder="Deck name...">
+                        <button class="btn btn-small" id="p4-save-btn">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Final Settings -->
+        <div class="setup-card">
+            <h2>7. Game Start</h2>
             <div class="form-group">
                 <label>First Player</label>
                 <div class="radio-group">
@@ -495,6 +635,14 @@
                     <label class="radio-option">
                         <input type="radio" name="first-player" value="1">
                         <span id="radio-p2-label">Player 2</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="first-player" value="2">
+                        <span id="radio-p3-label">Player 3</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="first-player" value="3">
+                        <span id="radio-p4-label">Player 4</span>
                     </label>
                     <button class="btn btn-small coin-flip-btn" id="coin-flip-btn">Coin Flip</button>
                     <span class="coin-result" id="coin-result"></span>
@@ -512,18 +660,70 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        // ---- Restore starting life from last session ----
-        const savedLife = localStorage.getItem('setup-starting-life');
-        if (savedLife) {
-            document.getElementById('starting-life').value = savedLife;
+        // ================================================================
+        // Format Selection & Life Persistence
+        // ================================================================
+        const formatRadios = document.querySelectorAll('input[name="game-format"]');
+        const startingLifeInput = document.getElementById('starting-life');
+
+        function getSelectedFormat() {
+            const checked = document.querySelector('input[name="game-format"]:checked');
+            return checked ? checked.value : 'Commander';
         }
 
+        function getStorageKey(format) {
+            return `setup-life-${format}`;
+        }
+
+        function getDefaultLife(format) {
+            return format === 'Tiny Leaders' ? 25 : 40;
+        }
+
+        function loadStartingLife(format) {
+            const saved = localStorage.getItem(getStorageKey(format));
+            if (saved) {
+                startingLifeInput.value = saved;
+            } else {
+                startingLifeInput.value = getDefaultLife(format);
+            }
+        }
+
+        // Initialize life based on default selected format
+        loadStartingLife(getSelectedFormat());
+
+        // Save life value on input
+        startingLifeInput.addEventListener('input', () => {
+            const format = getSelectedFormat();
+            localStorage.setItem(getStorageKey(format), startingLifeInput.value);
+        });
+
+        formatRadios.forEach(radio => {
+            radio.addEventListener('change', () => {
+                const newFormat = radio.value;
+                console.log('Format changed to:', newFormat);
+
+                // Adjust starting life to saved value or default for the new format
+                loadStartingLife(newFormat);
+                
+                // Explicitly reload decks for the new format
+                refreshSavedDecks();
+                
+                // Reset parsed state as deck requirements (like size) might conceptually change
+                PLAYER_NUMS.forEach(function (pn) {
+                    document.getElementById('p' + pn + '-deck').value = '';
+                    document.getElementById('p' + pn + '-result').classList.remove('visible');
+                    document.getElementById('p' + pn + '-post-parse').classList.remove('visible');
+                    deckParsed[pn] = false;
+                });
+                updateStartButton();
+            });
+        });
+
         // ---- State ----
+        const PLAYER_NUMS = [1, 2, 3, 4];
         let scryfallReady = false;
-        let deck1Parsed = false;
-        let deck2Parsed = false;
-        let deck1Data = null;
-        let deck2Data = null;
+        const deckParsed = { 1: false, 2: false, 3: false, 4: false };
+        const deckData = { 1: null, 2: null, 3: null, 4: null };
 
         // ---- DOM refs ----
         const scryfallInfoEl = document.getElementById('scryfall-info');
@@ -535,21 +735,15 @@
         const startError = document.getElementById('start-error');
 
         // ---- Sync player names with radio labels ----
-        const p1NameInput = document.getElementById('p1-name');
-        const p2NameInput = document.getElementById('p2-name');
-        const radioP1Label = document.getElementById('radio-p1-label');
-        const radioP2Label = document.getElementById('radio-p2-label');
-
-        p1NameInput.addEventListener('input', () => {
-            radioP1Label.textContent = p1NameInput.value || 'Player 1';
+        const nameInputs = {};
+        PLAYER_NUMS.forEach(function (pn) {
+            const input = document.getElementById('p' + pn + '-name');
+            const label = document.getElementById('radio-p' + pn + '-label');
+            nameInputs[pn] = input;
+            const sync = function () { label.textContent = input.value || ('Player ' + pn); };
+            input.addEventListener('input', sync);
+            sync();  // initial
         });
-        p2NameInput.addEventListener('input', () => {
-            radioP2Label.textContent = p2NameInput.value || 'Player 2';
-        });
-
-        // Trigger initial label sync
-        radioP1Label.textContent = p1NameInput.value || 'Player 1';
-        radioP2Label.textContent = p2NameInput.value || 'Player 2';
 
         // ================================================================
         // Scryfall Status
@@ -633,16 +827,21 @@
         // ================================================================
 
         function refreshSavedDecks() {
-            fetch('/api/decks/list')
+            var format = getSelectedFormat();
+            console.log('Refreshing decks for format:', format);
+            fetch('/api/decks/list?game_format=' + encodeURIComponent(format))
                 .then(res => res.json())
                 .then(data => {
                     var decks = data.decks || [];
-                    [1, 2].forEach(function (pn) {
+                    console.log('Decks received:', decks.length);
+                    PLAYER_NUMS.forEach(function (pn) {
                         var sel = document.getElementById('p' + pn + '-saved-decks');
                         var loadBtn = document.getElementById('p' + pn + '-load-btn');
                         var delBtn = document.getElementById('p' + pn + '-delete-btn');
-                        var val = sel.value;
+                        
+                        // Clear existing but keep placeholder
                         sel.innerHTML = '<option value="">-- select --</option>';
+                        
                         decks.forEach(function (d) {
                             var cmdLabel = d.commander_names && d.commander_names.length ? d.commander_names.join(' + ') : (d.commander || '');
                             var label = d.name + ' (' + d.card_count + ' cards' + (cmdLabel ? ', ' + cmdLabel : '') + ')';
@@ -651,15 +850,15 @@
                             opt.textContent = label;
                             sel.appendChild(opt);
                         });
-                        if (val) sel.value = val;
-                        loadBtn.disabled = !sel.value;
-                        delBtn.disabled = !sel.value;
+                        
+                        loadBtn.disabled = true;
+                        delBtn.disabled = true;
                     });
                 })
-                .catch(function () {});
+                .catch(function (err) { console.error('Error refreshing decks:', err); });
         }
 
-        [1, 2].forEach(function (pn) {
+        PLAYER_NUMS.forEach(function (pn) {
             var sel = document.getElementById('p' + pn + '-saved-decks');
             var loadBtn = document.getElementById('p' + pn + '-load-btn');
             var delBtn = document.getElementById('p' + pn + '-delete-btn');
@@ -671,7 +870,8 @@
 
             loadBtn.addEventListener('click', function () {
                 if (!sel.value) return;
-                fetch('/api/decks/load?filename=' + encodeURIComponent(sel.value))
+                var format = getSelectedFormat();
+                fetch('/api/decks/load?filename=' + encodeURIComponent(sel.value) + '&game_format=' + encodeURIComponent(format))
                     .then(function (res) { return res.json(); })
                     .then(function (data) {
                         if (!data.success) return;
@@ -689,7 +889,8 @@
                 if (!sel.value) return;
                 var selText = sel.options[sel.selectedIndex].textContent;
                 if (!confirm('Delete deck "' + selText + '"?')) return;
-                fetch('/api/decks/' + encodeURIComponent(sel.value), { method: 'DELETE' })
+                var format = getSelectedFormat();
+                fetch('/api/decks/' + encodeURIComponent(sel.value) + '?game_format=' + encodeURIComponent(format), { method: 'DELETE' })
                     .then(function (res) { return res.json(); })
                     .then(function () { refreshSavedDecks(); })
                     .catch(function (err) { console.error('Delete deck failed:', err); });
@@ -702,12 +903,10 @@
         // File Upload
         // ================================================================
 
-        document.getElementById('p1-file').addEventListener('change', (e) => {
-            handleFileUpload(e.target, document.getElementById('p1-deck'));
-        });
-
-        document.getElementById('p2-file').addEventListener('change', (e) => {
-            handleFileUpload(e.target, document.getElementById('p2-deck'));
+        PLAYER_NUMS.forEach(function (pn) {
+            document.getElementById('p' + pn + '-file').addEventListener('change', (e) => {
+                handleFileUpload(e.target, document.getElementById('p' + pn + '-deck'));
+            });
         });
 
         function handleFileUpload(fileInput, textarea) {
@@ -728,12 +927,10 @@
         // Parse Deck
         // ================================================================
 
-        document.getElementById('p1-parse-btn').addEventListener('click', () => {
-            parseDeck(1);
-        });
-
-        document.getElementById('p2-parse-btn').addEventListener('click', () => {
-            parseDeck(2);
+        PLAYER_NUMS.forEach(function (pn) {
+            document.getElementById('p' + pn + '-parse-btn').addEventListener('click', () => {
+                parseDeck(pn);
+            });
         });
 
         function parseDeck(playerNum, presetCommanders) {
@@ -787,13 +984,8 @@
 
                     showDeckResult(resultEl, 'success', msg, warningsHtml);
 
-                    if (playerNum === 1) {
-                        deck1Parsed = true;
-                        deck1Data = data;
-                    } else {
-                        deck2Parsed = true;
-                        deck2Data = data;
-                    }
+                    deckParsed[playerNum] = true;
+                    deckData[playerNum] = data;
                     updateStartButton();
 
                     // Collect card names for commander dropdown
@@ -860,7 +1052,7 @@
         }
 
         // Save deck buttons
-        [1, 2].forEach(function (pn) {
+        PLAYER_NUMS.forEach(function (pn) {
             document.getElementById('p' + pn + '-save-btn').addEventListener('click', function () {
                 var nameInput = document.getElementById('p' + pn + '-save-name');
                 var deckName = nameInput.value.trim();
@@ -872,8 +1064,9 @@
                 var commanderNames = [];
                 if (cmdSelect.value) commanderNames.push(cmdSelect.value);
                 if (partnerSelect.value) commanderNames.push(partnerSelect.value);
-                var deckData = pn === 1 ? deck1Data : deck2Data;
-                var cardCount = deckData ? deckData.card_count : 0;
+                var dData = deckData[pn];
+                var cardCount = dData ? dData.card_count : 0;
+                var format = getSelectedFormat();
 
                 fetch('/api/decks/save', {
                     method: 'POST',
@@ -882,7 +1075,8 @@
                         name: deckName,
                         decklist_text: deckText,
                         commander_names: commanderNames,
-                        card_count: cardCount
+                        card_count: cardCount,
+                        format: format
                     })
                 })
                 .then(function (res) { return res.json(); })
@@ -908,14 +1102,18 @@
         // ================================================================
 
         function updateStartButton() {
-            const ready = scryfallReady && deck1Parsed && deck2Parsed;
+            const allParsed = PLAYER_NUMS.every(function (pn) { return deckParsed[pn]; });
+            const ready = scryfallReady && allParsed;
             startBtn.disabled = !ready;
 
             if (!ready) {
                 const reasons = [];
                 if (!scryfallReady) reasons.push('card database not downloaded');
-                if (!deck1Parsed) reasons.push('Player 1 deck not parsed');
-                if (!deck2Parsed) reasons.push('Player 2 deck not parsed');
+                PLAYER_NUMS.forEach(function (pn) {
+                    if (!deckParsed[pn]) {
+                        reasons.push((nameInputs[pn].value || ('Player ' + pn)) + ' deck not parsed');
+                    }
+                });
                 startError.textContent = 'Required: ' + reasons.join(', ');
                 startError.classList.add('visible');
             } else {
@@ -937,28 +1135,25 @@
             resultEl.classList.remove('visible');
             resultEl.textContent = '';
 
+            // Helper: display name for a player index (0-based)
+            const nameForIndex = (idx) => nameInputs[idx + 1].value || ('Player ' + (idx + 1));
+            const numPlayers = PLAYER_NUMS.length;
+
             // Animate briefly then show result
             let flips = 0;
-            const maxFlips = 10;
+            const maxFlips = 12;
             const flipInterval = setInterval(() => {
                 flips++;
-                const tempWinner = Math.random() < 0.5 ? 0 : 1;
-                const tempName = tempWinner === 0
-                    ? (p1NameInput.value || 'Player 1')
-                    : (p2NameInput.value || 'Player 2');
-                resultEl.textContent = tempName;
+                const tempWinner = Math.floor(Math.random() * numPlayers);
+                resultEl.textContent = nameForIndex(tempWinner);
                 resultEl.classList.add('visible');
 
                 if (flips >= maxFlips) {
                     clearInterval(flipInterval);
 
                     // Final result
-                    const winner = Math.random() < 0.5 ? 0 : 1;
-                    const winnerName = winner === 0
-                        ? (p1NameInput.value || 'Player 1')
-                        : (p2NameInput.value || 'Player 2');
-
-                    resultEl.textContent = winnerName + ' goes first!';
+                    const winner = Math.floor(Math.random() * numPlayers);
+                    resultEl.textContent = nameForIndex(winner) + ' goes first!';
 
                     // Select the radio button
                     const radios = document.querySelectorAll('input[name="first-player"]');
@@ -992,21 +1187,22 @@
             }
 
             // Send already-parsed card data instead of raw text to avoid re-parsing
+            const format = getSelectedFormat();
+            const players = PLAYER_NUMS.map(function (pn) {
+                const d = deckData[pn];
+                return {
+                    name: nameInputs[pn].value || ('Player ' + pn),
+                    decklist: d && d.data ? d.data.main : document.getElementById('p' + pn + '-deck').value.trim(),
+                    commander_names: getCommanderNames(pn)
+                };
+            });
+            const playModeEl = document.querySelector('input[name="play-mode"]:checked');
             const payload = {
-                players: [
-                    {
-                        name: p1NameInput.value || 'Player 1',
-                        decklist: deck1Data && deck1Data.data ? deck1Data.data.main : document.getElementById('p1-deck').value.trim(),
-                        commander_names: getCommanderNames(1)
-                    },
-                    {
-                        name: p2NameInput.value || 'Player 2',
-                        decklist: deck2Data && deck2Data.data ? deck2Data.data.main : document.getElementById('p2-deck').value.trim(),
-                        commander_names: getCommanderNames(2)
-                    }
-                ],
-                starting_life: parseInt(document.getElementById('starting-life').value) || 20,
-                first_player: firstPlayer
+                players: players,
+                starting_life: parseInt(document.getElementById('starting-life').value) || (format === 'Tiny Leaders' ? 25 : 40),
+                first_player: firstPlayer,
+                format: format,
+                play_mode: playModeEl ? playModeEl.value : 'competitive'
             };
 
             startBtn.disabled = true;

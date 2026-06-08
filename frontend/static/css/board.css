@@ -161,6 +161,7 @@ button {
     gap: 12px;
     flex-shrink: 0;
     height: 28px;
+    position: relative;  /* anchor the centered top-switch */
 }
 
 .player-top .player-label {
@@ -230,6 +231,43 @@ button {
     user-select: none;
 }
 .hide-hand-toggle input { margin: 0; cursor: pointer; }
+
+/* Top-board opponent switcher: one chip per opponent (name + life).
+   Centered at the top (absolute, so name/controls keep their sides). */
+.top-switch {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: inline-flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+.top-switch-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.top-switch-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--p1-accent);
+    color: var(--text-primary);
+}
+/* Currently viewed opponent */
+.top-switch-btn.viewing {
+    border-color: var(--p1-accent);
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+    font-weight: 700;
+}
+/* Whoever is on turn — green accent ring */
+.top-switch-btn.active-turn {
+    box-shadow: 0 0 0 2px rgba(80, 200, 120, 0.55);
+}
 
 /* Hidden hand card: card-back with large number */
 .hidden-hand-card.card {
@@ -351,6 +389,14 @@ button {
     overflow-x: hidden;
     padding: 2px;
     min-height: 0;
+}
+
+/* While a card is being dragged, freeze scrolling of the card containers so
+   the browser doesn't auto-scroll a zone when the card nears its edge. The
+   current scroll position is preserved (overflow:hidden keeps scrollTop). */
+body.dragging-active .zone-cards,
+body.dragging-active .subzone-cards {
+    overflow: hidden;
 }
 
 /* Scrollbar styling for zone cards */
@@ -602,16 +648,76 @@ button {
     color: #ffb6c1;
 }
 
-/* Card face-down state */
+/* Card face-down state — hide the hidden identity (name/type/printed P/T),
+   but keep counters, attachments (inventory toggle) and the face-down P/T badge. */
 .card.face-down .card-header,
 .card.face-down .card-type,
 .card.face-down .card-pt,
 .card.face-down .card-loyalty,
 .card.face-down .card-custom-pt,
 .card.face-down .linked-exile-list,
-.card.face-down .card-badge-token,
-.card.face-down .inventory-toggle {
+.card.face-down .card-badge-token {
     display: none;
+}
+
+/* Face-down type label — top of the card (Morph / Manifest / Cloaked) */
+.card-fd-label {
+    display: none;
+}
+.card.face-down .card-fd-label {
+    display: block;
+    text-align: center;
+    font-size: var(--card-font);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 2px 0;
+    color: rgba(255, 255, 255, 0.6);
+}
+.card.face-down[data-fd-type="morph"] .card-fd-label {
+    color: rgba(255, 180, 50, 0.95);
+}
+.card.face-down[data-fd-type="manifest"] .card-fd-label {
+    color: rgba(120, 175, 255, 0.95);
+}
+.card.face-down[data-fd-type="cloaked"] .card-fd-label {
+    color: rgba(205, 205, 255, 0.95);
+}
+
+/* Face-down P/T badge — bottom-right, clickable (reuses custom-pt look) */
+.card-fd-pt {
+    display: none;
+}
+.card.face-down .card-fd-pt {
+    display: block;
+    font-size: var(--card-font);
+    font-weight: 700;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 3px;
+    padding: 0 3px;
+    text-align: right;
+    margin-top: auto;
+    margin-left: auto;
+    width: fit-content;
+    cursor: pointer;
+    user-select: none;
+}
+.card.face-down .card-fd-pt:hover {
+    background: rgba(0, 0, 0, 0.65);
+    border-color: rgba(255, 255, 255, 0.6);
+}
+.card-fd-pt .fd-pt-power,
+.card-fd-pt .fd-pt-toughness {
+    cursor: pointer;
+    padding: 0 1px;
+}
+.card-fd-pt .fd-pt-power:hover {
+    color: #90ee90;
+}
+.card-fd-pt .fd-pt-toughness:hover {
+    color: #ffb6c1;
 }
 
 /* Per-owner face-down colors: Andre (0) = türkis, Mia (1) = lila, conjured = grau */
@@ -648,36 +754,6 @@ button {
     border-color: #666 !important;
 }
 
-.card.face-down::after {
-    content: 'Face Down';
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    font-size: 8px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.35);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.card.face-down[data-fd-type="morph"]::after {
-    content: 'Morph\A 2/2';
-    white-space: pre;
-    color: rgba(255, 180, 50, 0.7);
-}
-
-.card.face-down[data-fd-type="manifest"]::after {
-    content: 'Manifest\A 2/2';
-    white-space: pre;
-    color: rgba(100, 160, 255, 0.7);
-}
-
-.card.face-down[data-fd-type="cloaked"]::after {
-    content: 'Cloaked\A 2/2';
-    white-space: pre;
-    color: rgba(200, 200, 255, 0.7);
-}
 
 /* Card tapped state */
 .card.tapped {

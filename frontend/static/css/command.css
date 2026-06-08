@@ -172,6 +172,31 @@ body {
     word-wrap: break-word;
     overflow-wrap: break-word;
     animation: chatFadeIn 0.2s ease;
+    position: relative;  /* anchor the delete button */
+}
+
+/* Per-bubble delete (×) — appears on hover */
+.msg-delete {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.chat-msg:hover .msg-delete { opacity: 1; }
+.msg-delete:hover {
+    color: #fff;
+    background: var(--accent);
 }
 
 @keyframes chatFadeIn {
@@ -336,7 +361,7 @@ body {
 .snapshot-control-label select {
     background: var(--bg-primary);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 3px;
     padding: 1px 4px;
     font-size: 11px;
@@ -355,7 +380,7 @@ body {
     width: 100%;
     background: var(--bg-primary);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 3px;
     padding: 4px 6px;
     font-size: 11px;
@@ -565,3 +590,108 @@ body {
         padding: 7px 12px;
     }
 }
+
+/* OpenRouter limit tracker */
+.llm-limit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.llm-limit-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.10);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.llm-limit-fill {
+    height: 100%;
+    width: 0%;
+    background: #4caf50;
+    border-radius: 3px;
+    transition: width 0.4s ease, background 0.4s ease;
+}
+.llm-limit-fill.warn { background: #e0b020; }
+.llm-limit-fill.crit { background: #d24b4b; }
+.llm-limit-text {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Conversation tabs (resume old conversations) */
+.conversation-tabs {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 6px 12px 0;
+    flex: 0 0 auto;
+}
+.conv-tab {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.conv-tab:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.conv-tab.active {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    border-color: var(--accent, #4caf50);
+    font-weight: 700;
+}
+
+/* Partner selector (next to the send box) */
+.partner-buttons {
+    display: flex;
+    gap: 6px;
+    padding: 6px 12px 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;  /* right-aligned */
+}
+.partner-btn {
+    padding: 3px 12px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.partner-btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.partner-btn.active {
+    background: var(--accent, #4caf50);
+    border-color: var(--accent, #4caf50);
+    color: #ffffff;
+    font-weight: 700;
+}
+
+/* Collapsed board-state chip (first user message) */
+.chat-msg.board-chip .chat-text {
+    font-style: italic;
+    color: var(--text-muted);
+}
+
+/* Eliminate / revive toggle in the life counters */
+.elim-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+.elim-toggle input { cursor: pointer; margin: 0; }
+.life-counter.eliminated .life-player-name {
+    text-decoration: line-through;
+    opacity: 0.5;
+}
+.life-counter.eliminated .elim-toggle { color: var(--accent); }

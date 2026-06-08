@@ -1,5 +1,5 @@
 """
-Pydantic models for the MTG Duel Commander Board State Tracker.
+Pydantic models for the MTG Commander Board State Tracker.
 Central data structures representing the complete game state.
 """
 
@@ -65,6 +65,7 @@ class PlayerState(BaseModel):
     commander_damage_received: Dict[str, int] = Field(default_factory=dict)
     extra_counters: Dict[str, int] = Field(default_factory=dict)  # e.g. {"Poison": 3, "Experience": 7}
     mana_pool: str = ""
+    eliminated: bool = False  # lost the game — excluded from snapshot & turn order (board kept)
 
     @model_validator(mode="before")
     @classmethod
@@ -97,8 +98,32 @@ class ActionEntry(BaseModel):
     timestamp: str  # ISO datetime
 
 
+class ConversationMessage(BaseModel):
+    """A single turn in an LLM conversation."""
+    role: str  # "user" | "assistant"
+    content: str
+    timestamp: str  # ISO datetime
+
+
+class Conversation(BaseModel):
+    """A persistent LLM conversation with one bot (partner).
+
+    The board snapshot (from the partner's perspective) is embedded only in the
+    first user message; follow-ups carry just text. The full message list is
+    resent to OpenRouter on every call — that is the conversation's memory.
+    """
+    id: str  # UUID
+    partner_index: int  # which player the conversation is with
+    created_turn: int = 0
+    created_at: str = ""
+    model: str = ""  # last model used
+    messages: List[ConversationMessage] = Field(default_factory=list)
+
+
 class GameState(BaseModel):
     """The complete game state - single source of truth."""
+    format: str = "Commander"
+    play_mode: str = "competitive"  # "competitive" | "casual" | "playtest" — shapes the bot role text
     players: List[PlayerState] = Field(default_factory=list)
     cards: Dict[str, CardState] = Field(default_factory=dict)  # card_id -> CardState
     turn: int = 0
@@ -108,8 +133,17 @@ class GameState(BaseModel):
     zone_move_counter: int = 0
     action_log: List[ActionEntry] = Field(default_factory=list)
     arrows: List[Arrow] = Field(default_factory=list)  # Visual arrows between cards (not in snapshot)
-    frozen_hand_order: List[str] = Field(default_factory=list)  # Card IDs for stable hand numbering (refreshed on turn change)
+    frozen_hand_orders: Dict[int, List[str]] = Field(default_factory=dict)  # player_index -> card IDs, for stable "Handkarte N" numbering (refrozen per player on turn change / mulligan)
+    conversations: List[Conversation] = Field(default_factory=list)  # Persistent LLM threads (per bot)
     game_started: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_format_name(cls, data: Any) -> Any:
+        """Migrate the old 'Duel Commander' format label to 'Commander'."""
+        if isinstance(data, dict) and data.get("format") == "Duel Commander":
+            data["format"] = "Commander"
+        return data
 
 
 class ChatMessage(BaseModel):

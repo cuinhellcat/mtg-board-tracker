@@ -6,11 +6,18 @@ Stored as JSON files in cache/saved_decks/.
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 BASE_DIR = Path(__file__).parent.parent
 DECKS_DIR = BASE_DIR / "cache" / "saved_decks"
+
+
+def _get_format_dir(game_format: str) -> Path:
+    """Return the subdirectory for a specific format."""
+    folder = "tiny_leaders" if game_format == "Tiny Leaders" else "duel_commander"
+    return DECKS_DIR / folder
 
 
 def _sanitize_filename(name: str) -> str:
@@ -19,11 +26,12 @@ def _sanitize_filename(name: str) -> str:
     return safe[:80] or "unnamed"
 
 
-def list_decks() -> List[Dict[str, Any]]:
+def list_decks(game_format: str = "Commander") -> List[Dict[str, Any]]:
     """Return list of saved decks (name + commander(s) + card_count)."""
-    DECKS_DIR.mkdir(parents=True, exist_ok=True)
+    target_dir = _get_format_dir(game_format)
+    target_dir.mkdir(parents=True, exist_ok=True)
     decks = []
-    for f in sorted(DECKS_DIR.glob("*.json")):
+    for f in sorted(target_dir.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             # Backwards compat: old decks have commander_name (string), new ones have commander_names (list)
@@ -43,28 +51,31 @@ def list_decks() -> List[Dict[str, Any]]:
 
 
 def save_deck(name: str, decklist_text: str, commander_names: List[str],
-              card_count: int, commander_name: Optional[str] = None) -> Dict[str, Any]:
+              card_count: int, commander_name: Optional[str] = None, game_format: str = "Commander") -> Dict[str, Any]:
     """Save a deck to disk. Returns {ok, filename}."""
-    DECKS_DIR.mkdir(parents=True, exist_ok=True)
+    target_dir = _get_format_dir(game_format)
+    target_dir.mkdir(parents=True, exist_ok=True)
     # Backwards compat: accept old single commander_name param
     if not commander_names and commander_name:
         commander_names = [commander_name]
     filename = _sanitize_filename(name)
-    path = DECKS_DIR / f"{filename}.json"
+    path = target_dir / f"{filename}.json"
     data = {
         "name": name,
         "decklist_text": decklist_text,
         "commander_names": commander_names,
         "commander_name": commander_names[0] if commander_names else None,  # backwards compat
         "card_count": card_count,
+        "format": game_format,
     }
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"ok": True, "filename": filename}
 
 
-def load_deck(filename: str) -> Optional[Dict[str, Any]]:
+def load_deck(filename: str, game_format: str = "Commander") -> Optional[Dict[str, Any]]:
     """Load a saved deck by filename (without extension)."""
-    path = DECKS_DIR / f"{filename}.json"
+    target_dir = _get_format_dir(game_format)
+    path = target_dir / f"{filename}.json"
     if not path.exists():
         return None
     try:
@@ -73,10 +84,12 @@ def load_deck(filename: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def delete_deck(filename: str) -> bool:
+def delete_deck(filename: str, game_format: str = "Commander") -> bool:
     """Delete a saved deck. Returns True if deleted."""
-    path = DECKS_DIR / f"{filename}.json"
+    target_dir = _get_format_dir(game_format)
+    path = target_dir / f"{filename}.json"
     if path.exists():
         path.unlink()
         return True
     return False
+

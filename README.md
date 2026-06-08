@@ -1,6 +1,6 @@
 # MTG Board State Tracker
 
-A lightweight, local web app for playing **Magic: The Gathering** (Duel Commander, 1v1) against an LLM — or just for tracking your board state with style.
+A lightweight, local web app for playing **Magic: The Gathering** (Commander) against AI bots — or just for tracking your board state with style.
 
 The core idea: instead of manually typing out your board state every turn and watching the LLM hallucinate lands that don't exist, this app generates clean, structured **Snapshots** optimized for LLM consumption. You play both sides manually, copy-paste the snapshot into your LLM of choice, and get back a coherent response.
 
@@ -21,9 +21,14 @@ This tracker solves that by:
 
 ## Features
 
+### Multiplayer Commander (1 Human + up to 3 Bots)
+- Play a **4-player Commander pod**: you (default **Andre**) plus AI opponents (default **Lexi**, **Emma**, **Dainty** — all names editable in setup; 2–4 players supported)
+- **Your board is always at the bottom.** The **top board switches** between opponents via name buttons, and **auto-switches** to whoever becomes the active player on "Pass Turn"
+- You physically operate every player's board; each bot only ever sees a **text snapshot from its own perspective** (its hand open, everyone else's hand shown as counts)
+
 ### Two-Window Architecture
-- **Board Window** (horizontal monitor) — the battlefield with all zones, drag & drop, card rendering
-- **Command Center** (vertical/second monitor) — phase tracker, life counters, action log, chat, snapshot generation
+- **Board Window** (horizontal monitor) — your board (bottom) + one switchable opponent board (top), all zones, drag & drop, card rendering
+- **Command Center** (vertical/second monitor) — phase tracker, life counters (all players), action log, chat, snapshot generation, and a clean **"⏻ App beenden"** (quit) button that shuts the server down gracefully
 
 ### Board & Cards
 - **Drag & Drop** between all zones (hand, battlefield, graveyard, exile, command zone, library)
@@ -41,36 +46,42 @@ This tracker solves that by:
 - **Commander Tax** — tracked automatically, manually adjustable via +/- pill
 
 ### Snapshots (The Core Feature)
-The Command Center generates a text snapshot of the entire board state, formatted for LLM consumption:
+"Copy Boardstate" generates a text snapshot **from the perspective of the active player** — exactly what that bot would see at the table. It opens with a role instruction, then the bot's own board in full, then each opponent with public zones only (hands as counts):
 
 ```
-=== BOARD STATE SNAPSHOT ===
-Format: Duel Commander | Turn: 5 | Phase: Main 1 | Active Player: Andre
+Deine Rolle: Du bist ein Magic-Spieler in einer Commanderrunde. ...
+Andre, einer deiner Gegner, legt alle Karten. ...
 
---- Andre (40 life) ---
+Du bist Lexi und spielst gegen Andre, Emma und Dainty.
+
+=== MTG COMMANDER -- BOARD STATE ===
+Turn 5 (Lexi's 2nd) | Phase: Main 1 | Active Player: Lexi (You)
+Zugreihenfolge: Lexi → Emma → Dainty → Andre
+
+--- YOUR STATUS (Lexi) ---
+Life: 40
+Hand (3 cards):
+  - Handkarte1: Llanowar Elves {G} [Creature — Elf Druid] (1/1)
+  ...
 Battlefield:
+  Lands: 4x Forest
   Creatures:
-    Llanowar Elves {G} [Creature — Elf Druid] (1/1) [TAPPED]
-    Questing Beast {2}{G}{G} [Creature — Beast] (4/4) — Counters: 2x +1/+1
-      → attached: Rancor {G} [Enchantment — Aura]
-  Lands: 4x Forest, 2x Stomping Ground
-  Other:
-    Sylvan Library {1}{G} [Enchantment]
-Hand: 3 cards
-Graveyard: Lightning Bolt, Swords to Plowshares
+    - Questing Beast {2}{G}{G} (4/4) — Counters: 2x +1/+1
 
---- Recent Actions (last 3) ---
-  Andre: Attacked with Questing Beast
-  Andre: Cast Rancor targeting Questing Beast
-  Andre: Played Stomping Ground (tapped)
+--- OPPONENT: Andre ---
+Life: 40
+Hand: 5 cards (hidden)
+Battlefield: ...
 ```
 
 Key snapshot features:
+- **Active-player perspective** — own hand fully visible (with stable "HandkarteN" numbering that matches the board's hidden-hand numbers), opponents' hands shown as counts only
+- **Turn order** line so the bot knows who acts next
 - Basic lands are **grouped** (not listed individually)
-- **Oracle text** is opt-in per card (toggle via context menu) — only included when relevant
+- **Oracle text** has three modes — Off / Reduced / Full — selectable in the Command Center
 - **Attached cards** shown indented under their parent
-- **Configurable** recent actions count (persisted in localStorage)
-- **Library count** omitted (to prevent LLM from gaming information)
+- **Configurable** recent-actions depth and an extra notes field, both appended to the copy
+- **Per-bot hand / mulligan copy** — switch the top board to a bot, then "Copy Bot's Hand (Mulligan)" to get that bot's opening-hand prompt
 
 ### Scryfall Integration
 - **Bulk Oracle Cards** download (~34,000 cards cached locally)
@@ -85,27 +96,27 @@ Key snapshot features:
 - **Game archive** — finished games saved with timestamps, viewable from landing page
 - **Deck storage** — save and load decklists for quick game setup
 - **System tray** — runs as a tray icon (no terminal window needed)
+- **In-app quit** — "⏻ App beenden" in the Command Center shuts the server down cleanly (localhost-only), so you can stop it even when launched from the app menu with no terminal or tray
 - **WebSocket sync** — board and command center stay in sync in real-time
 - **Context menus** — right-click cards for all available actions
 - **Hover preview** — see full card image on hover (both faces for DFCs)
 
 ---
 
-## How to Use (Playing Against an LLM)
+## How to Use (Playing a Pod vs. Bots)
 
-1. **Start a game** — pick decks for both players on the setup page
-2. **Play your turn** normally — drag cards, tap lands, attack
-3. **Generate a snapshot** — click the snapshot button in the Command Center
-4. **Copy & paste** the snapshot into your LLM (Claude, Gemini, ChatGPT, etc.)
-5. **Read the LLM's response** — it tells you what it wants to do
-6. **Execute the LLM's moves** manually on the board (drag, tap, cast)
-7. **Repeat** — generate a new snapshot for the next interaction
+1. **Start a game** — on the setup page, fill in up to 4 players (you + bots) and their decks
+2. **Mulligans** — switch the top board to each bot and use **"Copy Bot's Hand (Mulligan)"** to get that bot's keep/mulligan decision
+3. **On a bot's turn** — the top board auto-switches to the active bot. Click **"Copy Boardstate"** to get the snapshot from that bot's perspective
+4. **Copy & paste** it into a fresh chat for that bot (Claude, Gemini, ChatGPT, local model, …) — each call is intentionally context-free
+5. **Read the bot's response** and **execute its moves** manually on its board (drag, tap, cast)
+6. **Pass Turn** — advance to the next player and repeat
 
 **Pro tips:**
-- Toggle "Oracle Text" on for cards the LLM needs to understand (complex abilities)
-- Use the chat for additional context ("I'm not blocking this turn")
-- Undo if you misplay the LLM's intended move
-- The LLM doesn't see your hand or library — only what's in the snapshot
+- Each bot is a **separate, fresh chat** — anything that must carry over goes into the **Additional Notes** field, which is appended to the copy
+- Use the **Oracle Text** mode (Off / Reduced / Full) for cards the bot needs to understand
+- Undo (100 levels) if you misplay a bot's intended move
+- A bot only sees its own hand — every other hand is shown as a count in its snapshot
 
 ---
 
@@ -131,23 +142,45 @@ pip install pystray pillow
 
 ### Running
 
-**Option A — System Tray (recommended on Windows):**
+**Linux / macOS — one-shot script (recommended):**
+```bash
+bash run.sh
+```
+(Call it via `bash`, not `./run.sh` — OneDrive/rclone mounts are `noexec`, so
+the script can't be executed directly, but `bash` reading it works fine.)
+
+Creates a virtualenv on first run (outside this folder, so OneDrive doesn't
+choke on the venv's symlinks), installs dependencies, then launches. The app
+opens in your browser. If a system-tray backend is available a tray icon with a
+Quit menu is shown; otherwise it runs in the foreground (quit with Ctrl+C).
+
+On KDE/GNOME you can also install a clickable launcher (no terminal needed):
+copy `mtg-tracker.desktop` into `~/.local/share/applications/` and adjust the
+paths inside it. The app then appears in your application menu as
+"MTG Board Tracker".
+
+**Windows — System Tray:**
 ```bash
 python start.py
 ```
 A tray icon appears near the clock. Right-click it to open Board, Command Center, or quit.
 
-**Option B — Direct server:**
+**Any platform — direct server:**
 ```bash
 uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 Then open `http://localhost:8000` in your browser.
 
+> **Note on the venv & OneDrive:** This project folder lives in OneDrive, which
+> uses a filesystem that can't create the symlinks `python -m venv` needs. Put
+> the virtualenv elsewhere (`run.sh` uses `~/.venvs/mtg-board-tracker`), or
+> override the location with `MTG_VENV=/path/to/venv ./run.sh`.
+
 ### First Launch
 1. Open `http://localhost:8000` — you'll see the landing page
 2. Click **"+ Neues Spiel"** (New Game)
 3. Download the Scryfall card database (one-time, ~50MB)
-4. Paste your decklists, pick commanders, start the game
+4. Fill in the players (you + up to 3 bots), paste each decklist, pick commanders, start the game
 5. The **Board** opens in the current tab, **Command Center** opens in a new window — drag it to your second monitor
 
 ---
@@ -184,7 +217,7 @@ Then open `http://localhost:8000` in your browser.
 
 - **Action Dispatch Pattern** — every state change goes through `GameEngine.dispatch()`. No direct state mutation. This gives you undo, action logging, and auto-save for free.
 - **WebSocket sync** — both windows connect to the same WebSocket. Any action in either window broadcasts the updated state to all clients.
-- **Players as a list** — not hardcoded `player1`/`player2`. Ready for multiplayer expansion.
+- **Players as a list** — supports a 2–4 player pod. The board renders a fixed bottom slot (you) and one switchable top slot (the selected/active opponent), decoupled from player index so the same DOM serves any opponent.
 
 ---
 
@@ -217,8 +250,8 @@ Then open `http://localhost:8000` in your browser.
 ## Roadmap
 
 - **Phase 1** ✅ — Board State Tracker with snapshot generation (complete)
+- **Multiplayer** ✅ — 2–4 player pod (1 human + up to 3 bots), switchable opponent board, per-bot perspective snapshots (complete)
 - **Phase 2** 🔜 — LLM API integration (send snapshots directly, receive responses in-app)
-- **Phase 3** 🔮 — Multiplayer (3-4 players, multiple LLM opponents)
 
 ---
 

@@ -80,7 +80,7 @@ class GameEngine:
         archive_dir = BASE_DIR / "saves" / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        raw_names = "_vs_".join(p.name for p in self.state.players[:2]) if self.state.players else "unknown"
+        raw_names = "_vs_".join(p.name for p in self.state.players) if self.state.players else "unknown"
         safe_names = "".join(c if c.isalnum() or c in "-_" else "_" for c in raw_names)
         archive_path = archive_dir / f"{timestamp}_{safe_names}.json"
         payload = {
@@ -123,7 +123,7 @@ class GameEngine:
                 games.append({
                     "filename": f.name,
                     "archived_at": data.get("archived_at", f.stem[:15]),
-                    "players": [{"name": p.get("name", "?"), "life": p.get("life", 0)} for p in players[:2]],
+                    "players": [{"name": p.get("name", "?"), "life": p.get("life", 0)} for p in players],
                     "turn": state.get("turn", 0),
                     "phase": PHASE_DISPLAY_NAMES.get(state.get("phase", ""), state.get("phase", "")),
                 })
@@ -145,6 +145,9 @@ class GameEngine:
                 # Re-apply printing preferences so saved art choices survive restarts
                 for card in self.state.cards.values():
                     self._apply_printing_pref(card)
+                # Seed per-player frozen hand orders for older saves (pre-migration)
+                if self.state.game_started and not self.state.frozen_hand_orders:
+                    self._freeze_all_hand_orders()
             except Exception:
                 # Corrupted save - start fresh
                 self.state = GameState()
@@ -308,6 +311,7 @@ class GameEngine:
             "set_card_printing": self._handle_set_card_printing,
             "untap_all": self._handle_untap_all,
             "set_player_counter": self._handle_set_player_counter,
+            "set_eliminated": self._handle_set_eliminated,
             "set_commander_tax": self._handle_set_commander_tax,
             "add_card": self._handle_add_card,
             "set_custom_pt": self._handle_set_custom_pt,
@@ -499,6 +503,20 @@ class GameEngine:
         self._log_action("set_player_counter", f"{player.name}: {counter_name} {old_val} → {new_val}")
         return {"ok": True}
 
+    def _handle_set_eliminated(self, action: dict) -> dict:
+        """Mark a player as eliminated (lost) or revive them. Reversible via the checkbox.
+
+        Eliminated players are dropped from the snapshot and the turn rotation, but
+        their board stays in the tracker so a misclick is easy to undo.
+        """
+        player_index = action["player_index"]
+        eliminated = bool(action.get("eliminated", True))
+        player = self._get_player(player_index)
+        player.eliminated = eliminated
+        verb = "ausgeschieden" if eliminated else "wieder im Spiel"
+        self._log_action("set_eliminated", f"{player.name} ist {verb}")
+        return {"ok": True}
+
     def _handle_set_commander_tax(self, action: dict) -> dict:
         """Manually adjust commander tax for a specific commander."""
         player_index = action["player_index"]
@@ -553,13 +571,27 @@ class GameEngine:
         return {"ok": True}
 
     def _handle_pass_turn(self, action: dict) -> dict:
-        self._begin_new_turn()
+        stop_at = action.get("stop_at_phase", "main1")
+        if stop_at not in ("upkeep", "draw", "main1"):
+            stop_at = "main1"
+        self._begin_new_turn(stop_at_phase=stop_at)
         return {"ok": True}
 
-    def _begin_new_turn(self):
-        """Switch active player, increment turn, and auto-resolve untap/upkeep/draw."""
+    def _begin_new_turn(self, stop_at_phase: str = "main1"):
+        """Switch active player, increment turn, and auto-resolve untap/upkeep/draw.
+
+        stop_at_phase: 'upkeep' stops before draw (no card drawn), 'draw' stops
+        after drawing (no advance to main1), 'main1' is the default full flow.
+        """
         self.state.turn += 1
-        self.state.active_player_index = 1 - self.state.active_player_index
+        player_count = len(self.state.players) or 1
+        # Advance to the next player, skipping any who are eliminated.
+        nxt = (self.state.active_player_index + 1) % player_count
+        for _ in range(player_count):
+            if not self.state.players[nxt].eliminated:
+                break
+            nxt = (nxt + 1) % player_count
+        self.state.active_player_index = nxt
         active_idx = self.state.active_player_index
         active_name = self.state.players[active_idx].name
 
@@ -579,26 +611,44 @@ class GameEngine:
 
         # --- Upkeep step ---
         self.state.phase = "upkeep"
+        if stop_at_phase != "upkeep":
+            # --- Draw step: draw one card ---
+            self.state.phase = "draw"
+            library = self._library_cards(active_idx)
+            if library:
+                card = library[0]
+                self._move_to_zone(card, "hand")
+                self._log_action("draw_card", f"{active_name} drew a card: {card.name}")
+            else:
+                self._log_action("draw_card", f"{active_name} tried to draw but library is empty!")
 
-        # --- Draw step: draw one card ---
-        self.state.phase = "draw"
-        library = self._library_cards(active_idx)
-        if library:
-            card = library[0]
-            self._move_to_zone(card, "hand")
-            self._log_action("draw_card", f"{active_name} drew a card: {card.name}")
-        else:
-            self._log_action("draw_card", f"{active_name} tried to draw but library is empty!")
+            if stop_at_phase != "draw":
+                # Advance to main1 after draw
+                self.state.phase = "main1"
 
-        # Advance to main1 after draw
-        self.state.phase = "main1"
+        # Refreeze every player's hand order — numbers stay stable within the
+        # turn and only update here, after Pass Turn.
+        self._freeze_all_hand_orders()
 
-        # Freeze LLM hand order for stable numbering during this turn
-        llm_hand = sorted(
-            [c for c in self.state.cards.values() if c.zone == "hand" and c.owner_index == 1],
+
+    def _freeze_hand_order(self, player_index: int):
+        """Snapshot one player's hand order for stable 'Handkarte N' numbering.
+
+        Frozen so that, during a turn, playing a card never renumbers the others
+        (e.g. a bot saying "play card 4 then card 6" stays valid). Refrozen per
+        player on turn change and after a mulligan — i.e. only between turns.
+        """
+        hand = sorted(
+            [c for c in self.state.cards.values()
+             if c.zone == "hand" and c.owner_index == player_index],
             key=lambda c: c.zone_moved_at or 0,
         )
-        self.state.frozen_hand_order = [c.id for c in llm_hand]
+        self.state.frozen_hand_orders[player_index] = [c.id for c in hand]
+
+    def _freeze_all_hand_orders(self):
+        """Refreeze every player's hand order (called on turn change / game start)."""
+        for player_index in range(len(self.state.players)):
+            self._freeze_hand_order(player_index)
 
 
     def _handle_draw_card(self, action: dict) -> dict:
@@ -758,8 +808,12 @@ class GameEngine:
         """Update a planeswalker's loyalty value."""
         card = self._get_card(action["card_id"])
         new_loyalty = action["loyalty"]
-        old_loyalty = card.loyalty
-        card.loyalty = str(new_loyalty)
+        if card.transformed and card.back_face is not None:
+            old_loyalty = card.back_face.get("loyalty")
+            card.back_face["loyalty"] = str(new_loyalty)
+        else:
+            old_loyalty = card.loyalty
+            card.loyalty = str(new_loyalty)
         self._log_action("set_loyalty", f"{card.name} loyalty {old_loyalty} → {new_loyalty}")
         return {"ok": True}
 
@@ -898,13 +952,21 @@ class GameEngine:
 
     def _update_custom_pt_from_counters(self, card: CardState) -> None:
         """Auto-update custom P/T badge based on +1/+1, -1/-1 counters AND arrow buffs."""
-        if card.power is None or card.toughness is None:
+        if card.face_down:
+            # Only Morph/Manifest/Cloaked are 2/2 creatures. A plain face-down card
+            # is not necessarily a creature, so it gets no P/T badge.
+            if card.face_down_type not in ("morph", "manifest", "cloaked"):
+                return
+            base_p = 2
+            base_t = 2
+        elif card.power is None or card.toughness is None:
             return
-        try:
-            base_p = int(card.power)
-            base_t = int(card.toughness)
-        except (ValueError, TypeError):
-            return  # Non-numeric P/T (e.g. "*/*") — skip
+        else:
+            try:
+                base_p = int(card.power)
+                base_t = int(card.toughness)
+            except (ValueError, TypeError):
+                return  # Non-numeric P/T (e.g. "*/*") — skip
         plus = card.counters.get("+1/+1", 0)
         minus = card.counters.get("-1/-1", 0)
         counter_delta = plus - minus
@@ -1239,13 +1301,8 @@ class GameEngine:
 
         self._log_action("mulligan", f"{player.name} took a mulligan (drew 7 new cards)")
 
-        # Re-freeze LLM hand order after mulligan
-        if player_index == 1:
-            llm_hand = sorted(
-                [c for c in self.state.cards.values() if c.zone == "hand" and c.owner_index == 1],
-                key=lambda c: c.zone_moved_at or 0,
-            )
-            self.state.frozen_hand_order = [c.id for c in llm_hand]
+        # Re-freeze this player's hand order — the new hand renumbers immediately.
+        self._freeze_hand_order(player_index)
 
         return {"ok": True}
 
@@ -1274,12 +1331,16 @@ class GameEngine:
         players_data = action["players_data"]
         starting_life = action.get("starting_life", 20)
         first_player_index = action.get("first_player_index", 0)
+        game_format = action.get("format", "Commander")
+        play_mode = action.get("play_mode", "competitive")
 
         # Archive current game before resetting
         self._archive_current_game()
 
         # Reset state completely
         self.state = GameState()
+        self.state.format = game_format
+        self.state.play_mode = play_mode
         self.undo_stack = []
         self.chat_log = []
 
@@ -1369,12 +1430,8 @@ class GameEngine:
         self.state.first_player_index = first_player_index
         self.state.game_started = True
 
-        # Freeze LLM hand order for stable numbering
-        llm_hand = sorted(
-            [c for c in self.state.cards.values() if c.zone == "hand" and c.owner_index == 1],
-            key=lambda c: c.zone_moved_at or 0,
-        )
-        self.state.frozen_hand_order = [c.id for c in llm_hand]
+        # Freeze every player's opening-hand order (stable mulligan numbering)
+        self._freeze_all_hand_orders()
 
         self._log_action("start_game", "Game started!")
         return {"ok": True}
@@ -1441,6 +1498,9 @@ class GameEngine:
             card.face_down_type = action.get("face_down_type", card.face_down_type)
         else:
             card.face_down_type = None
+        # Recompute the P/T badge: face-down uses a 2/2 base, face-up reverts to
+        # the printed P/T base (so counter/arrow math stays correct on flip).
+        self._update_custom_pt_from_counters(card)
         state_str = "face down" if card.face_down else "face up"
         if card.face_down and card.face_down_type:
             state_str += f" ({card.face_down_type})"
@@ -1487,13 +1547,27 @@ class GameEngine:
         source = self._get_card(action["source_card_id"])
         target = self._get_card(action["target_card_id"])
         arrow_id = str(uuid.uuid4())
+        buff_p = action.get("buff_power")
+        buff_t = action.get("buff_toughness")
         arrow = Arrow(
             id=arrow_id,
             source_card_id=source.id,
             target_card_id=target.id,
+            buff_power=int(buff_p) if buff_p is not None else None,
+            buff_toughness=int(buff_t) if buff_t is not None else None,
         )
         self.state.arrows.append(arrow)
-        self._log_action("create_arrow", f"Arrow: {source.name} → {target.name}")
+        if arrow.buff_power is not None or arrow.buff_toughness is not None:
+            if target.zone == "battlefield":
+                self._update_custom_pt_from_counters(target)
+            bp = arrow.buff_power or 0
+            bt = arrow.buff_toughness or 0
+            self._log_action(
+                "create_arrow",
+                f"Arrow: {source.name} → {target.name} ({bp:+d}/{bt:+d})",
+            )
+        else:
+            self._log_action("create_arrow", f"Arrow: {source.name} → {target.name}")
         return {"ok": True, "arrow_id": arrow_id}
 
     def _handle_remove_arrow(self, action: dict) -> dict:

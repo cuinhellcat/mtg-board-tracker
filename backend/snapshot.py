@@ -40,18 +40,18 @@ _REMINDER_RE = re.compile(r"\s*\([^()]*\)")
 # Current oracle mode for snapshot rendering (set per-request)
 _oracle_mode = "off"
 
-# LLM player index for this snapshot run (set per-request) — used to label commanders
-# from the LLM's perspective ("dein" vs "des Gegners").
-_llm_index = 1
+# Perspective player index for this snapshot run (set per-request) — used to
+# label commanders from the active player's point of view ("dein" vs "Gegner").
+_perspective_index = 0
 
 
 def _commander_tag(card: CardState) -> str:
     """Return a prominent commander annotation, perspective-aware."""
     if not card.is_commander:
         return ""
-    if card.owner_index == _llm_index:
+    if card.owner_index == _perspective_index:
         return " *** Diese Karte ist dein Commander ***"
-    return " *** Diese Karte ist der Commander des Gegners ***"
+    return " *** Diese Karte ist der Commander eines Gegners ***"
 
 
 def _strip_reminder_text(text: str) -> str:
@@ -59,7 +59,7 @@ def _strip_reminder_text(text: str) -> str:
     return _REMINDER_RE.sub("", text).strip()
 
 
-def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", recent_actions_count: int = 1, oracle_mode: str = "off", number_hand: bool = False) -> str:
+def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", recent_actions_count: int = 1, oracle_mode: str = "off", number_hand: bool = False, perspective_index: Optional[int] = None) -> str:
     """
     Generate a board state snapshot from the LLM player's perspective.
 
@@ -83,7 +83,7 @@ def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", 
             card.show_oracle_text = True
 
     try:
-        return _generate_snapshot_inner(game_state, action_log, notes, recent_actions_count, number_hand)
+        return _generate_snapshot_inner(game_state, action_log, notes, recent_actions_count, number_hand, perspective_index)
     finally:
         _oracle_mode = "off"
         # Restore original flags
@@ -92,30 +92,92 @@ def generate_snapshot(game_state: GameState, action_log: list, notes: str = "", 
                 game_state.cards[cid].show_oracle_text = orig
 
 
-def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str, recent_actions_count: int, number_hand: bool = False) -> str:
-    global _llm_index
-    llm_index = 1
-    human_index = 0
-    _llm_index = llm_index
-    llm_player = game_state.players[llm_index]
-    human_player = game_state.players[human_index]
+def build_board_prompt(game_state: GameState, action_log: list, perspective_index: int,
+                       oracle_mode: str = "off", recent_actions_count: int = 1,
+                       number_hand: bool = False, notes: str = "", clutter: str = "",
+                       hand_note: str = "") -> str:
+    """Assemble the full board prompt for a given perspective.
 
-    # Determine active player label
-    active_name = game_state.players[game_state.active_player_index].name
-    if game_state.active_player_index == llm_index:
-        active_label = f"{active_name} (You)"
-    else:
-        active_label = f"{active_name} (Opponent)"
+    Mirrors the frontend's buildPromptText(): snapshot (no notes) + INSTRUCTIONS
+    (clutter) + HAND NOTE (when hands are numbered/hidden) + ADDITIONAL NOTES.
+    Used server-side for LLM conversations so the partner's perspective is correct.
+    """
+    text = generate_snapshot(
+        game_state, action_log, notes="", recent_actions_count=recent_actions_count,
+        oracle_mode=oracle_mode, number_hand=number_hand, perspective_index=perspective_index,
+    )
+    if clutter and clutter.strip():
+        text += "\n\n=== INSTRUCTIONS ===\n" + clutter.strip()
+    if number_hand and hand_note and hand_note.strip():
+        text += "\n\n=== HAND NOTE ===\n" + hand_note.strip()
+    if notes and notes.strip():
+        text += "\n\n=== ADDITIONAL NOTES ===\n" + notes.strip()
+    return text
 
-    # Calculate whose Nth turn this is (tournament-style)
-    # Turn 1 belongs to first_player, Turn 2 to the other, Turn 3 to first again, etc.
+
+def _role_block(human_name: str, play_mode: str) -> str:
+    """Build the opening role/instruction text, varied by play mode.
+
+    competitive: ruthless, play to win (default).
+    casual:      kitchen-table — focus the real threat, deals allowed.
+    playtest:    only attack the human if the human is clearly the biggest threat.
+    """
+    base = (
+        "Deine Rolle: Du bist ein Magic-Spieler in einer Commanderrunde. "
+        "Verhalte dich exakt wie ein Spieler in einer Commander-Runde. "
+        "Nenne deinen Spielzug mit allen nötigen Infos, lasse überflüssige Informationen weg. "
+        "Erkläre nicht warum du es tust. "
+        f"{human_name}, einer deiner Gegner, legt alle Karten. "
+        "Er benötigt nur Informationen darüber was du tust, nicht was deine Pläne sind."
+    )
+    if play_mode == "casual":
+        base += (
+            " Spielstil: Dies ist eine lockere Küchentisch-Runde. Bewerte, wer der größte "
+            "Threat ist, und richte deine Aggression vor allem dorthin — mach harmlose Spieler "
+            "nicht einfach platt, nur weil es gerade möglich ist. Politik gehört dazu: Du darfst "
+            "Absprachen und Deals vorschlagen, annehmen und einhalten "
+            "(z. B. \"Ich greife dich diese Runde nicht an, wenn ...\"). Ein faires, "
+            "unterhaltsames Spiel ist dir wichtiger als die maximale Gewinnchance."
+        )
+    elif play_mode == "playtest":
+        base += (
+            f" Spielmodus PLAYTEST: {human_name} testet gerade sein Deck. Greife {human_name} "
+            f"NUR an, wenn {human_name} eindeutig der mit Abstand größte Threat am Tisch ist. "
+            f"Andernfalls greife {human_name} unter keinen Umständen an und ziele auch mit "
+            f"Removal/Effekten nicht auf ihn. Richte Angriffe stattdessen gegen die anderen "
+            "Bots und spiele ansonsten ganz normal und sinnvoll."
+        )
+    return base
+
+
+def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str, recent_actions_count: int, number_hand: bool = False, perspective_index: Optional[int] = None) -> str:
+    global _perspective_index
+    player_count = len(game_state.players)
     active_idx = game_state.active_player_index
-    first_idx = game_state.first_player_index
-    if active_idx == first_idx:
-        player_turn_num = (game_state.turn + 1) // 2
-    else:
-        player_turn_num = game_state.turn // 2
+    # Perspective = whose board/hand this is ("you"). Defaults to the active
+    # player, but can be any player (e.g. asking Emma during Lexi's turn).
+    if perspective_index is None:
+        perspective_index = active_idx
+    _perspective_index = perspective_index
 
+    def _eliminated(i: int) -> bool:
+        return getattr(game_state.players[i], "eliminated", False)
+
+    perspective_name = game_state.players[perspective_index].name
+    active_name = game_state.players[active_idx].name
+    # Opponents shown = everyone else who is still in the game.
+    opp_indices = [i for i in range(player_count) if i != perspective_index and not _eliminated(i)]
+    eliminated_names = [game_state.players[i].name for i in range(player_count)
+                        if i != perspective_index and _eliminated(i)]
+
+    # "Active Player" shows the real active player; mark "(You)" only when that
+    # is also the perspective player.
+    active_label = f"{active_name} (You)" if active_idx == perspective_index else active_name
+
+    # Calculate whose Nth turn this is. Players rotate in seating order, so the
+    # active player's personal turn number is (turn - 1) // player_count + 1.
+    pc = player_count or 1
+    player_turn_num = (game_state.turn - 1) // pc + 1
     ordinals = {1: "1st", 2: "2nd", 3: "3rd"}
     ordinal = ordinals.get(player_turn_num, f"{player_turn_num}th")
     turn_detail = f"Turn {game_state.turn} ({active_name}'s {ordinal})"
@@ -123,123 +185,40 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
     phase_display = PHASE_DISPLAY_NAMES.get(game_state.phase, game_state.phase)
 
     lines = []
-    lines.append("=== MTG DUEL COMMANDER -- BOARD STATE ===")
+    opp_names = [game_state.players[i].name for i in opp_indices]
+    human_name = game_state.players[0].name if game_state.players else "Andre"
+
+    # 1) Role / instruction block first — sharpened for weaker LLMs; varies by mode.
+    play_mode = getattr(game_state, "play_mode", "competitive")
+    lines.append(_role_block(human_name, play_mode))
+    lines.append("")
+
+    # 2) Who you are / who you play against.
+    if opp_names:
+        lines.append(
+            f"Du bist {perspective_name} und spielst gegen {_join_names_de(opp_names)}."
+        )
+        lines.append("")
+
+    # 3) Then the heading + turn/phase line.
+    format_title = game_state.format.upper() if hasattr(game_state, "format") else "COMMANDER"
+    lines.append(f"=== MTG {format_title} -- BOARD STATE ===")
     lines.append(f"{turn_detail} | Phase: {phase_display} | Active Player: {active_label}")
+    # Turn order around the table, starting with the active player — alive only.
+    turn_order = [game_state.players[(active_idx + i) % player_count].name
+                  for i in range(player_count)
+                  if not _eliminated((active_idx + i) % player_count)]
+    lines.append("Zugreihenfolge: " + " → ".join(turn_order))
+    if eliminated_names:
+        lines.append(f"Ausgeschieden (hat das Spiel verloren): {_join_names_de(eliminated_names)}.")
     lines.append("")
 
-    # --- YOUR STATUS (LLM) ---
-    lines.append(f"--- YOUR STATUS ({llm_player.name}) ---")
-    lines.append(f"Life: {llm_player.life}")
-    for cmd_name, cmd_tax in llm_player.commander_taxes.items():
-        if cmd_tax > 0:
-            if len(llm_player.commander_taxes) > 1:
-                lines.append(f"Commander Tax ({cmd_name}): {cmd_tax}")
-            else:
-                lines.append(f"Commander Tax: {cmd_tax}")
-    for cname, cval in llm_player.extra_counters.items():
-        if cval > 0:
-            lines.append(f"{cname}: {cval}")
-    lines.append("")
+    # --- Perspective player's own board (full detail) ---
+    _render_self_section(game_state, lines, perspective_index, number_hand)
 
-    # LLM Hand (full detail)
-    llm_hand = _get_zone_cards(game_state, llm_index, "hand")
-    lines.append(f"Hand ({len(llm_hand)} cards):")
-    if llm_hand:
-        frozen = game_state.frozen_hand_order
-        # Fallback: if frozen is empty (old save / toggled mid-game), use current order
-        if not frozen:
-            frozen = [c.id for c in llm_hand]
-        for card in llm_hand:
-            if number_hand:
-                idx = frozen.index(card.id) + 1 if card.id in frozen else len(frozen) + 1
-                if card.id not in frozen:
-                    frozen.append(card.id)
-                prefix = f"Handkarte{idx}: "
-            else:
-                prefix = ""
-            lines.append(f"  - {prefix}{_format_card_full(card)}{_format_back_face(card)}")
-    else:
-        lines.append("  (empty)")
-    lines.append("")
-
-    # LLM Battlefield
-    llm_battlefield = _get_zone_cards(game_state, llm_index, "battlefield", controller=True)
-    lines.append("Battlefield:")
-    if llm_battlefield:
-        _render_battlefield_grouped(llm_battlefield, game_state, lines, is_own=True)
-    else:
-        lines.append("  (empty)")
-    lines.append("")
-
-    # LLM Graveyard
-    llm_graveyard = _get_zone_cards(game_state, llm_index, "graveyard")
-    lines.append("Graveyard:")
-    if llm_graveyard:
-        for card in llm_graveyard:
-            lines.append(f"  - {_format_card_brief(card)}{_format_back_face(card)}")
-    else:
-        lines.append("  (empty)")
-    lines.append("")
-
-    # LLM Command Zone
-    llm_command = _get_zone_cards(game_state, llm_index, "command_zone")
-    if llm_command:
-        lines.append("Command Zone:")
-        for card in llm_command:
-            cmd_tax = llm_player.commander_taxes.get(card.name, 0)
-            cast_count = cmd_tax // 2
-            cast_note = f" (cast {cast_count}x, tax {cmd_tax})" if cast_count > 0 else ""
-            lines.append(f"  - {_format_card_brief(card)}{cast_note}")
-        lines.append("")
-
-    # --- OPPONENT STATUS (Human) ---
-    lines.append(f"--- OPPONENT STATUS ({human_player.name}) ---")
-    lines.append(f"Life: {human_player.life}")
-    for cmd_name, cmd_tax in human_player.commander_taxes.items():
-        if cmd_tax > 0:
-            if len(human_player.commander_taxes) > 1:
-                lines.append(f"Commander Tax ({cmd_name}): {cmd_tax}")
-            else:
-                lines.append(f"Commander Tax: {cmd_tax}")
-    for cname, cval in human_player.extra_counters.items():
-        if cval > 0:
-            lines.append(f"{cname}: {cval}")
-    lines.append("")
-
-    # Human Hand (hidden)
-    human_hand = _get_zone_cards(game_state, human_index, "hand")
-    lines.append(f"Hand: {len(human_hand)} cards (hidden)")
-    lines.append("")
-
-    # Human Battlefield
-    human_battlefield = _get_zone_cards(game_state, human_index, "battlefield", controller=True)
-    lines.append("Battlefield:")
-    if human_battlefield:
-        _render_battlefield_grouped(human_battlefield, game_state, lines, is_own=False)
-    else:
-        lines.append("  (empty)")
-    lines.append("")
-
-    # Human Graveyard (with oracle text for LLM context)
-    human_graveyard = _get_zone_cards(game_state, human_index, "graveyard")
-    lines.append("Graveyard:")
-    if human_graveyard:
-        for card in human_graveyard:
-            lines.append(f"  - {_format_card_full(card)}{_format_back_face(card)}")
-    else:
-        lines.append("  (empty)")
-    lines.append("")
-
-    # Human Command Zone
-    human_command = _get_zone_cards(game_state, human_index, "command_zone")
-    if human_command:
-        lines.append("Command Zone:")
-        for card in human_command:
-            cmd_tax = human_player.commander_taxes.get(card.name, 0)
-            cast_count = cmd_tax // 2
-            cast_note = f" (cast {cast_count}x, tax {cmd_tax})" if cast_count > 0 else ""
-            lines.append(f"  - {_format_card_brief(card)}{cast_note}")
-        lines.append("")
+    # --- Opponents (public info only; hands as counts) ---
+    for opp_idx in opp_indices:
+        _render_opponent_section(game_state, lines, opp_idx)
 
     # --- STACK (shared zone) ---
     stack_cards = [c for c in game_state.cards.values() if c.zone == "stack"]
@@ -268,6 +247,126 @@ def _generate_snapshot_inner(game_state: GameState, action_log: list, notes: str
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _join_names_de(names: List[str]) -> str:
+    """Join names as German enumeration: 'A', 'A und B', 'A, B und C'."""
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + " und " + names[-1]
+
+
+def _render_player_status(player, lines: List[str]) -> None:
+    """Append Life / Commander Tax / extra counters for a player, then a blank line."""
+    lines.append(f"Life: {player.life}")
+    for cmd_name, cmd_tax in player.commander_taxes.items():
+        if cmd_tax > 0:
+            if len(player.commander_taxes) > 1:
+                lines.append(f"Commander Tax ({cmd_name}): {cmd_tax}")
+            else:
+                lines.append(f"Commander Tax: {cmd_tax}")
+    for cname, cval in player.extra_counters.items():
+        if cval > 0:
+            lines.append(f"{cname}: {cval}")
+    lines.append("")
+
+
+def _render_command_zone(game_state: GameState, lines: List[str], player, player_index: int) -> None:
+    """Append the Command Zone block (with per-commander cast/tax note) if non-empty."""
+    cards = _get_zone_cards(game_state, player_index, "command_zone")
+    if not cards:
+        return
+    lines.append("Command Zone:")
+    for card in cards:
+        cmd_tax = player.commander_taxes.get(card.name, 0)
+        cast_count = cmd_tax // 2
+        cast_note = f" (cast {cast_count}x, tax {cmd_tax})" if cast_count > 0 else ""
+        lines.append(f"  - {_format_card_brief(card)}{cast_note}")
+    lines.append("")
+
+
+def _render_self_section(game_state: GameState, lines: List[str], index: int, number_hand: bool) -> None:
+    """Render the active player's own board: hand (full), battlefield, graveyard, command zone."""
+    player = game_state.players[index]
+    lines.append(f"--- YOUR STATUS ({player.name}) ---")
+    _render_player_status(player, lines)
+
+    # Hand — full detail, with optional stable "Handkarte N" numbering
+    hand = _get_zone_cards(game_state, index, "hand")
+    lines.append(f"Hand ({len(hand)} cards):")
+    if hand:
+        # Each player has its own frozen order (stable within a turn). LOCAL copy
+        # — never mutate game_state. Fall back to live order if none frozen yet.
+        frozen = game_state.frozen_hand_orders.get(index)
+        order = list(frozen) if frozen else [c.id for c in hand]
+        for card in hand:
+            if number_hand:
+                if card.id not in order:
+                    order.append(card.id)
+                num = order.index(card.id) + 1
+                prefix = f"Handkarte{num}: "
+            else:
+                prefix = ""
+            lines.append(f"  - {prefix}{_format_card_full(card)}{_format_back_face(card)}")
+    else:
+        lines.append("  (empty)")
+    lines.append("")
+
+    # Battlefield (own — reveals face-down cards)
+    battlefield = _get_zone_cards(game_state, index, "battlefield", controller=True)
+    lines.append("Battlefield:")
+    if battlefield:
+        _render_battlefield_grouped(battlefield, game_state, lines, is_own=True)
+    else:
+        lines.append("  (empty)")
+    lines.append("")
+
+    # Graveyard (own — brief)
+    graveyard = _get_zone_cards(game_state, index, "graveyard")
+    lines.append("Graveyard:")
+    if graveyard:
+        for card in graveyard:
+            lines.append(f"  - {_format_card_brief(card)}{_format_back_face(card)}")
+    else:
+        lines.append("  (empty)")
+    lines.append("")
+
+    _render_command_zone(game_state, lines, player, index)
+
+
+def _render_opponent_section(game_state: GameState, lines: List[str], index: int) -> None:
+    """Render an opponent's public board: hand as count only, battlefield + graveyard visible."""
+    player = game_state.players[index]
+    lines.append(f"--- OPPONENT: {player.name} ---")
+    _render_player_status(player, lines)
+
+    # Hand hidden — count only
+    hand = _get_zone_cards(game_state, index, "hand")
+    lines.append(f"Hand: {len(hand)} cards (hidden)")
+    lines.append("")
+
+    # Battlefield (public — face-down cards stay hidden via is_own=False)
+    battlefield = _get_zone_cards(game_state, index, "battlefield", controller=True)
+    lines.append("Battlefield:")
+    if battlefield:
+        _render_battlefield_grouped(battlefield, game_state, lines, is_own=False)
+    else:
+        lines.append("  (empty)")
+    lines.append("")
+
+    # Graveyard (public — full detail for context)
+    graveyard = _get_zone_cards(game_state, index, "graveyard")
+    lines.append("Graveyard:")
+    if graveyard:
+        for card in graveyard:
+            lines.append(f"  - {_format_card_full(card)}{_format_back_face(card)}")
+    else:
+        lines.append("  (empty)")
+    lines.append("")
+
+    _render_command_zone(game_state, lines, player, index)
 
 
 def _get_zone_cards(
@@ -310,11 +409,14 @@ def _format_card_full(card: CardState) -> str:
         parts.append(f"[{card.type_line}]")
 
     # Power/toughness for creatures
-    if card.power is not None and card.toughness is not None:
-        if card.custom_power is not None:
+    if card.custom_power is not None and card.custom_toughness is not None:
+        if card.power is not None and card.toughness is not None:
             parts.append(f"(including counters and pumps: {card.custom_power}/{card.custom_toughness})")
         else:
-            parts.append(f"({card.power}/{card.toughness})")
+            # Non-creature turned creature via a manual P/T badge
+            parts.append(f"({card.custom_power}/{card.custom_toughness})")
+    elif card.power is not None and card.toughness is not None:
+        parts.append(f"({card.power}/{card.toughness})")
 
     # Loyalty for planeswalkers
     if card.loyalty is not None:
@@ -327,15 +429,10 @@ def _format_card_full(card: CardState) -> str:
             counter_strs.append(f"{count}x {ctype}")
         parts.append(f"(Counters: {', '.join(counter_strs)})")
 
-    # Oracle text — only when explicitly flagged per card
-    if card.show_oracle_text and card.oracle_text:
-        skip = _oracle_mode == "reduced" and card.name in ORACLE_SKIP
-        if not skip:
-            oracle = card.oracle_text.replace("\n", " / ")
-            if _oracle_mode == "reduced":
-                oracle = _strip_reminder_text(oracle)
-            if oracle:
-                parts.append(f"-- {oracle}")
+    # Oracle text — honours the oracle mode/flag
+    oracle = _oracle_for_card(card)
+    if oracle:
+        parts.append(f"-- {oracle}")
 
     # User note — always shown, appears like oracle text
     if card.note:
@@ -398,11 +495,13 @@ def _format_card_brief(card: CardState) -> str:
     if card.type_line and card.name not in BASIC_LANDS:
         parts.append(f"[{card.type_line}]")
 
-    if card.power is not None and card.toughness is not None:
-        if card.custom_power is not None:
+    if card.custom_power is not None and card.custom_toughness is not None:
+        if card.power is not None and card.toughness is not None:
             parts.append(f"(including counters and pumps: {card.custom_power}/{card.custom_toughness})")
         else:
-            parts.append(f"({card.power}/{card.toughness})")
+            parts.append(f"({card.custom_power}/{card.custom_toughness})")
+    elif card.power is not None and card.toughness is not None:
+        parts.append(f"({card.power}/{card.toughness})")
 
     if card.counters:
         counter_strs = []
@@ -451,10 +550,22 @@ def _extract_simple_mana(card: CardState) -> Optional[str]:
 
 
 _FACE_DOWN_LABELS = {
-    "morph": "Morph creature 2/2",
-    "manifest": "Manifest creature 2/2",
-    "cloaked": "Cloaked creature 2/2 (ward 2)",
+    "morph": ("Morph creature", ""),
+    "manifest": ("Manifest creature", ""),
+    "cloaked": ("Cloaked creature", " (ward 2)"),
 }
+
+
+def _oracle_for_card(card: CardState) -> str:
+    """Return the card's oracle text honouring the current oracle mode/flag, or ""."""
+    if card.show_oracle_text and card.oracle_text:
+        skip = _oracle_mode == "reduced" and card.name in ORACLE_SKIP
+        if not skip:
+            oracle = card.oracle_text.replace("\n", " / ")
+            if _oracle_mode == "reduced":
+                oracle = _strip_reminder_text(oracle)
+            return oracle
+    return ""
 
 
 def _format_card_perspective(card: CardState, is_own: bool) -> Optional[str]:
@@ -462,17 +573,36 @@ def _format_card_perspective(card: CardState, is_own: bool) -> Optional[str]:
     Return a special string for face-down / transformed cards, or None for normal rendering.
 
     Face-down:
-      - Own cards: full name + "(face down as Morph 2/2)" hint
-      - Opponent cards: just "Morph creature 2/2" — no name revealed
+      - Own cards (controller's perspective): full name + "(face down …)" hint,
+        plus the real oracle text when the oracle toggle is on (reduced/full).
+      - Opponent cards: just "Morph creature 2/2" / "Face-down card" — no name.
+      - P/T reflects +1/+1 counters and arrow buffs via custom_power (else base 2/2)
     Transformed:
       - Use back_face data for rendering
     """
     if card.face_down:
-        fd_label = _FACE_DOWN_LABELS.get(card.face_down_type, "Face-down Card")
+        # Own (controlled) face-down cards may carry their real oracle text.
+        oracle = _oracle_for_card(card) if is_own else ""
+        oracle_part = f" -- {oracle}" if oracle else ""
+        # A user note (e.g. "foretold") is a public annotation — show it either way.
+        note_part = f" -- NOTE: {card.note}" if card.note else ""
+        own_extra = oracle_part + note_part
+        label_info = _FACE_DOWN_LABELS.get(card.face_down_type)
+        if label_info:
+            # Morph / Manifest / Cloaked — a 2/2 creature
+            base, suffix = label_info
+            if card.custom_power is not None and card.custom_toughness is not None:
+                pt = f"{card.custom_power}/{card.custom_toughness}"
+            else:
+                pt = "2/2"
+            fd_label = f"{base} {pt}{suffix}"
+            if is_own:
+                return f"{card.name} (face down as {fd_label}){own_extra}"
+            return f"{fd_label}{note_part}"
+        # Plain face-down card — not necessarily a creature
         if is_own:
-            return f"{card.name} (face down as {fd_label})"
-        else:
-            return fd_label
+            return f"{card.name} (face down){own_extra}"
+        return f"Face-down card{note_part}"
     return None
 
 
@@ -499,7 +629,12 @@ def _classify_card(card: CardState) -> str:
     For DFCs with combined type lines (e.g. 'Artifact // Land'),
     use only the active face — front face for untransformed cards
     (transformed cards already have back-face type via _get_display_card).
+
+    A manual custom P/T badge marks the card as a creature (e.g. an animated
+    land / artifact the user turned into a creature on the board).
     """
+    if card.custom_power is not None:
+        return "creature"
     type_line = card.type_line or ""
     if " // " in type_line and not card.transformed:
         type_line = type_line.split(" // ")[0]
@@ -530,10 +665,19 @@ def _render_battlefield_grouped(
             continue
         fd_text = _format_card_perspective(c, is_own)
         if fd_text:
+            fd_annotations = []
+            if c.tapped:
+                fd_annotations.append("TAPPED")
+            if c.attacking:
+                fd_annotations.append("ATTACKING")
+            if c.blocking:
+                fd_annotations.append("BLOCKING")
+            fd_suffix = (" -- " + ", ".join(fd_annotations)) if fd_annotations else ""
+            fd_line = f"    - {fd_text}{fd_suffix}{_format_attached_inline(c, game_state)}"
             if c.face_down_type in ("morph", "manifest", "cloaked"):
-                creature_fd_lines.append(f"    - {fd_text}")
+                creature_fd_lines.append(fd_line)
             else:
-                face_down_lines.append(f"    - {fd_text}")
+                face_down_lines.append(fd_line)
         else:
             display_cards.append(_get_display_card(c))
 
@@ -552,18 +696,19 @@ def _render_battlefield_grouped(
                 # Grouped basic lands (e.g. "Swamp x3")
                 land_strs.append(item)
             else:
-                # Check if this land needs full rendering (DFC or has oracle beyond simple mana)
+                # Check if this land needs full rendering (DFC, attached auras, or complex oracle)
                 is_dfc = item.transformed or bool(item.back_face and item.back_face.get("name"))
+                has_attached = bool(item.attached_cards)
                 mana = _extract_simple_mana(item)
                 has_complex_oracle = bool(item.oracle_text) and (
                     mana is None or item.oracle_text.count("\n") > 0
                     or len(item.oracle_text) > 60
                 )
-                needs_full = is_dfc or (has_complex_oracle and _oracle_mode in ("reduced", "full"))
+                needs_full = is_dfc or has_attached or (has_complex_oracle and _oracle_mode in ("reduced", "full"))
 
                 if needs_full:
                     # Render as full card line
-                    label = f"    - {_format_card_full(item)}"
+                    label = f"    - {_format_card_full(item)}{_format_attached_inline(item, game_state)}"
                     if is_dfc and not item.transformed:
                         label += " (front face)"
                     elif is_dfc and item.transformed:
@@ -583,12 +728,6 @@ def _render_battlefield_grouped(
                         land_linked_lines.append(
                             f"    ({item.name} holds in exile: {linked_label})"
                         )
-                for att_id in item.attached_cards:
-                    att = game_state.cards.get(att_id)
-                    if att:
-                        land_linked_lines.append(
-                            f"    ({item.name} enchanted by: {att.name})"
-                        )
         if land_strs:
             lines.append(f"  Lands: {', '.join(land_strs)}")
         lines.extend(land_linked_lines)
@@ -600,45 +739,43 @@ def _render_battlefield_grouped(
     if creatures or creature_fd_lines:
         lines.append("  Creatures:")
         for card in creatures:
-            lines.append(f"    - {_format_card_full(card)}")
+            lines.append(f"    - {_format_card_full(card)}{_format_attached_inline(card, game_state)}")
             for linked_id in card.linked_exile_cards:
                 linked = game_state.cards.get(linked_id)
                 if linked:
                     linked_label = "face-down card" if linked.face_down else linked.name
                     lines.append(f"      -> holds in exile: {linked_label}")
-            _render_attached_cards(card, game_state, lines)
         lines.extend(creature_fd_lines)
 
     if others:
         lines.append("  Other Permanents:")
         for card in others:
-            lines.append(f"    - {_format_card_full(card)}")
+            lines.append(f"    - {_format_card_full(card)}{_format_attached_inline(card, game_state)}")
             for linked_id in card.linked_exile_cards:
                 linked = game_state.cards.get(linked_id)
                 if linked:
                     linked_label = "face-down card" if linked.face_down else linked.name
                     lines.append(f"      -> holds in exile: {linked_label}")
-            _render_attached_cards(card, game_state, lines)
 
     if face_down_lines:
         lines.append("  Face Down:")
         lines.extend(face_down_lines)
 
 
-def _render_attached_cards(
-    card: CardState, game_state: GameState, lines: List[str],
-) -> None:
-    """Render attached Auras/Equipment under a parent card."""
+def _format_attached_inline(card: CardState, game_state: GameState) -> str:
+    """Return an inline ' [attached: ...]' suffix for a card's attached auras/equipment,
+    or empty string. Uses ';' as separator because the brief format may contain commas."""
     if not card.attached_cards:
-        return
-    att_names = []
+        return ""
+    att_strs = []
     for att_id in card.attached_cards:
         att = game_state.cards.get(att_id)
         if att:
             att_display = _get_display_card(att)
-            att_names.append(_format_card_brief(att_display))
-    if att_names:
-        lines.append(f"      -> attached: {', '.join(att_names)}")
+            att_strs.append(_format_card_brief(att_display))
+    if not att_strs:
+        return ""
+    return f" [attached: {'; '.join(att_strs)}]"
 
 
 def _group_basic_lands(cards: List[CardState]) -> list:
@@ -684,31 +821,35 @@ def _group_basic_lands(cards: List[CardState]) -> list:
     return result
 
 
-def generate_bot_hand(game_state: GameState, oracle_mode: str = "off", number_hand: bool = False) -> str:
-    """Generate a text snippet of the bot's (LLM, player index 1) hand cards."""
+def generate_bot_hand(game_state: GameState, oracle_mode: str = "off", number_hand: bool = False, player_index: Optional[int] = None) -> str:
+    """Generate a text snippet of a player's hand cards.
+
+    player_index defaults to the active player when not given.
+    """
     global _oracle_mode
     if len(game_state.players) < 2:
         return "(No game in progress)"
 
     _oracle_mode = oracle_mode
-    llm_index = 1
-    llm_player = game_state.players[llm_index]
-    hand_cards = _get_zone_cards(game_state, llm_index, "hand")
+    idx = player_index if player_index is not None else game_state.active_player_index
+    player = game_state.players[idx]
+    hand_cards = _get_zone_cards(game_state, idx, "hand")
 
-    lines = [f"{llm_player.name}'s Hand ({len(hand_cards)} cards):"]
+    lines = [f"{player.name}'s Hand ({len(hand_cards)} cards):"]
     if hand_cards:
-        frozen = game_state.frozen_hand_order
-        if not frozen:
-            frozen = [c.id for c in hand_cards]
+        # Use this player's own frozen order (stable within a turn); fall back to
+        # live order if none frozen yet.
+        frozen = game_state.frozen_hand_orders.get(idx)
+        order = list(frozen) if frozen else [c.id for c in hand_cards]
         for card in hand_cards:
             show = oracle_mode != "off" or card.show_oracle_text
             orig = card.show_oracle_text
             card.show_oracle_text = show
             if number_hand:
-                idx = frozen.index(card.id) + 1 if card.id in frozen else len(frozen) + 1
-                if card.id not in frozen:
-                    frozen.append(card.id)
-                prefix = f"Handkarte{idx}: "
+                if card.id not in order:
+                    order.append(card.id)
+                num = order.index(card.id) + 1
+                prefix = f"Handkarte{num}: "
             else:
                 prefix = ""
             lines.append(f"  - {prefix}{_format_card_full(card)}{_format_back_face(card)}")
@@ -720,22 +861,24 @@ def generate_bot_hand(game_state: GameState, oracle_mode: str = "off", number_ha
     return "\n".join(lines)
 
 
-def generate_mulligan_prompt(game_state: GameState, oracle_mode: str = "off") -> str:
-    """Generate a mulligan decision prompt: commander info + hand + question."""
+def generate_mulligan_prompt(game_state: GameState, oracle_mode: str = "off", player_index: Optional[int] = None) -> str:
+    """Generate a mulligan decision prompt: commander info + hand + question.
+
+    player_index defaults to the active player when not given.
+    """
     global _oracle_mode
     if len(game_state.players) < 2:
         return "(No game in progress)"
 
     _oracle_mode = oracle_mode
-    llm_index = 1
-    llm_player = game_state.players[llm_index]
+    idx = player_index if player_index is not None else game_state.active_player_index
 
     lines: List[str] = []
 
-    # Find LLM's commanders
+    # Find the player's commanders
     commanders = [
         c for c in game_state.cards.values()
-        if c.is_commander and c.owner_index == llm_index
+        if c.is_commander and c.owner_index == idx
     ]
     if commanders:
         for cmd in commanders:
@@ -747,7 +890,7 @@ def generate_mulligan_prompt(game_state: GameState, oracle_mode: str = "off") ->
         lines.append("")
 
     # Hand cards (always with oracle in reduced style)
-    hand_cards = _get_zone_cards(game_state, llm_index, "hand")
+    hand_cards = _get_zone_cards(game_state, idx, "hand")
     lines.append(f"Das ist deine Starthand ({len(hand_cards)} Karten):")
     for card in hand_cards:
         orig = card.show_oracle_text
@@ -756,7 +899,7 @@ def generate_mulligan_prompt(game_state: GameState, oracle_mode: str = "off") ->
         card.show_oracle_text = orig
 
     lines.append("")
-    lines.append("Ich spiele gegen dich Commander. Das ist deine Starthand. Machst du einen Mulligan? Nur die Entscheidung. Ohne Begründung. Ich bin dein Gegner. Verrate mir nicht, wieso du behältst oder Mulligan machen willst. Nur die Entscheidung bitte: Mulligan oder Behalten?")
+    lines.append("Du spielst in einer Commanderrunde. Das ist deine Starthand. Machst du einen Mulligan? Nur die Entscheidung. Ohne Begründung. Ich bin dein Gegner. Verrate mir nicht, wieso du behältst oder Mulligan machen willst. Nur die Entscheidung bitte: Mulligan oder Behalten? Bedenke: Der erste Mulligan ist kostenlos. Pro jeden weiteren Mulligan über den ersten hinaus: Eine Karte unter die Bibliothek.")
 
     _oracle_mode = "off"
     return "\n".join(lines)

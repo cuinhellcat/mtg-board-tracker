@@ -18,6 +18,9 @@ saves/
 # Backups
 backups/
 
+# LLM diagnostic log
+llm.log
+
 # IDE
 .vscode/
 .idea/

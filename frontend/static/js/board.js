@@ -15,6 +15,50 @@
     /** @type {Object|null} The latest GameState received from the server. */
     var currentState = null;
 
+    /** @type {number} Which opponent (player index ≥ 1) is shown in the top slot. */
+    var topOpponentIndex = 1;
+
+    /** @type {number|null} Last seen active player, to detect turn changes. */
+    var lastActivePlayerIndex = null;
+
+    /** DOM slots: bottom is always player 0, 'top' shows topOpponentIndex. */
+    var BOARD_SLOTS = [0, 'top'];
+
+    /** Resolve a DOM slot to the live player index it currently represents. */
+    function slotPlayerIndex(slot) {
+        return slot === 'top' ? topOpponentIndex : 0;
+    }
+
+    /** Lands/Other split ratio (%) PER board slot ('0' = your board, 'top' =
+     *  opponent view). Independent per board so adjusting or acting on one board
+     *  never changes the other's split. Kept in memory so it survives re-renders
+     *  even when localStorage is blocked; mirrored to localStorage per slot for
+     *  cross-session persistence (best-effort). */
+    var bfSplitRatios = {};
+
+    function getBfSplit(slot) {
+        if (bfSplitRatios[slot] != null) return bfSplitRatios[slot];
+        var v = 50;
+        try {
+            var s = parseFloat(localStorage.getItem('mtg-bf-split-' + slot));
+            if (!isNaN(s)) {
+                v = s;
+            } else {
+                var legacy = parseFloat(localStorage.getItem('mtg-bf-split'));  // pre per-slot key
+                if (!isNaN(legacy)) v = legacy;
+            }
+        } catch (e) { /* localStorage unavailable — use default */ }
+        bfSplitRatios[slot] = v;
+        return v;
+    }
+
+    function setBfSplit(slot, pct) {
+        bfSplitRatios[slot] = pct;  // in-memory: source of truth across re-renders
+        try {
+            localStorage.setItem('mtg-bf-split-' + slot, pct.toFixed(1));  // best-effort cross-session
+        } catch (e) { /* localStorage blocked — in-memory value still applies */ }
+    }
+
     /** @type {string|null} Card ID being context-menu'd. */
     var contextCardId = null;
 
@@ -62,7 +106,7 @@
 
 
     /* ==================================================================
-       ERROR TOAST
+       ERROR TOAST / INFO TOAST
        ================================================================== */
 
     function showErrorToast(message) {
@@ -71,6 +115,14 @@
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(function () { toast.remove(); }, 5000);
+    }
+
+    function showInfoToast(message) {
+        var toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed;top:20px;right:20px;background:#27ae60;color:#fff;padding:10px 18px;border-radius:6px;z-index:99999;font-size:13px;max-width:400px;box-shadow:0 4px 12px rgba(0,0,0,0.4);';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        setTimeout(function () { toast.remove(); }, 3000);
     }
 
     /* ==================================================================
@@ -429,6 +481,27 @@
                 '</div>';
         }
 
+        // Face-down label (top) + P/T badge (bottom). Morph/Manifest/Cloaked are 2/2;
+        // counters & arrow buffs raise it via custom_power (computed server-side).
+        var faceDownLabelHtml = '';
+        var faceDownPtHtml = '';
+        if (card.face_down) {
+            var fdLabels = { morph: 'Morph', manifest: 'Manifest', cloaked: 'Cloaked' };
+            var isFdCreature = !!fdLabels[card.face_down_type];
+            var fdLabel = fdLabels[card.face_down_type] || 'Face Down';
+            faceDownLabelHtml = '<div class="card-fd-label">' + fdLabel + '</div>';
+            // Only Morph/Manifest/Cloaked are 2/2 creatures; a plain face-down card has no P/T.
+            if (isFdCreature) {
+                var fdP = hasCustomPt ? card.custom_power : 2;
+                var fdT = hasCustomPt ? card.custom_toughness : 2;
+                faceDownPtHtml = '<div class="card-fd-pt" title="Left-click: +1 / Right-click: -1">' +
+                    '<span class="fd-pt-power" data-card-id="' + card.id + '">' + fdP + '</span>' +
+                    '/' +
+                    '<span class="fd-pt-toughness" data-card-id="' + card.id + '">' + fdT + '</span>' +
+                    '</div>';
+            }
+        }
+
         // Collect linked exile & attached card data for inventory panel
         var linkedExileData = [];
         if (card.linked_exile_cards && card.linked_exile_cards.length > 0) {
@@ -473,6 +546,7 @@
         }
 
         el.innerHTML = tokenBadge + transformBadge + quantityBadge +
+            faceDownLabelHtml +
             '<div class="card-header">' +
                 '<div class="card-name">' + escapeHtml(displayName) + '</div>' +
                 '<div class="card-mana">' + renderManaCost(displayMana) + '</div>' +
@@ -480,6 +554,7 @@
             '<div class="card-type">' + escapeHtml(displayType) + '</div>' +
             ptHtml +
             customPtHtml +
+            faceDownPtHtml +
             counterHtml +
             oracleIndicator +
             noteIndicator +
@@ -524,6 +599,38 @@
             }
         }
 
+        // Face-down P/T badge: same behavior as custom P/T, but base is 2/2.
+        if (card.face_down) {
+            var fdBadge = el.querySelector('.card-fd-pt');
+            if (fdBadge) {
+                var curFdP = hasCustomPt ? card.custom_power : 2;
+                var curFdT = hasCustomPt ? card.custom_toughness : 2;
+                fdBadge.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var newP = curFdP;
+                    var newT = curFdT;
+                    if (e.target.classList.contains('fd-pt-toughness')) {
+                        newT += 1;
+                    } else {
+                        newP += 1;
+                    }
+                    MTGSocket.send({ action: 'set_custom_pt', card_id: card.id, power: newP, toughness: newT });
+                });
+                fdBadge.addEventListener('contextmenu', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    var newP = curFdP;
+                    var newT = curFdT;
+                    if (e.target.classList.contains('fd-pt-power')) {
+                        newP -= 1;
+                    } else {
+                        newT -= 1;
+                    }
+                    MTGSocket.send({ action: 'set_custom_pt', card_id: card.id, power: newP, toughness: newT });
+                });
+            }
+        }
+
         // Counter badge click handlers: left +1, right -1
         if (counterTypes.length > 0) {
             el.querySelectorAll('.counter-badge-clickable').forEach(function (badge) {
@@ -547,13 +654,13 @@
             if (loyaltyBadge) {
                 loyaltyBadge.addEventListener('click', function (e) {
                     e.stopPropagation();
-                    var cur = parseInt(card.loyalty, 10) || 0;
+                    var cur = parseInt(displayLoyalty, 10) || 0;
                     MTGSocket.send({ action: 'set_loyalty', card_id: card.id, loyalty: cur + 1 });
                 });
                 loyaltyBadge.addEventListener('contextmenu', function (e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    var cur = parseInt(card.loyalty, 10) || 0;
+                    var cur = parseInt(displayLoyalty, 10) || 0;
                     MTGSocket.send({ action: 'set_loyalty', card_id: card.id, loyalty: cur - 1 });
                 });
             }
@@ -768,27 +875,40 @@
 
         var numPlayers = state.players ? state.players.length : 0;
 
-        // Player names
-        // Player 0 = human (you, bottom), Player 1 = LLM/opponent (top)
+        // Clamp the top opponent index to a valid opponent (player index ≥ 1)
+        if (topOpponentIndex < 1 || topOpponentIndex >= numPlayers) {
+            topOpponentIndex = numPlayers > 1 ? 1 : 0;
+        }
+
+        // --- Bottom slot: always the human (player 0) ---
         if (numPlayers > 0) {
-            document.getElementById('player-bottom-name').textContent = state.players[0].name + ' (You)';
+            var botMark0 = state.players[0].eliminated ? ' ☠ raus' : '';
+            document.getElementById('player-bottom-name').textContent = state.players[0].name + ' (You)' + botMark0;
             document.getElementById('life-name-0').textContent = state.players[0].name;
+            renderPlayerZones(state, 0, 0);
+            document.getElementById('life-total-0').textContent = state.players[0].life;
+            renderCommanderDamage(state, 0, 0);
+            renderExtraCounters(state, 0, 0);
         }
+
+        // --- Top slot: the currently selected opponent ---
         if (numPlayers > 1) {
-            document.getElementById('player-top-name').textContent = state.players[1].name + ' (Opponent)';
-            document.getElementById('life-name-1').textContent = state.players[1].name;
-        }
-
-        // Render zones for each player
-        for (var pi = 0; pi < numPlayers && pi < 2; pi++) {
-            renderPlayerZones(state, pi);
-        }
-
-        // Life totals
-        for (var li = 0; li < numPlayers && li < 2; li++) {
-            document.getElementById('life-total-' + li).textContent = state.players[li].life;
-            renderCommanderDamage(state, li);
-            renderExtraCounters(state, li);
+            var topP = state.players[topOpponentIndex];
+            var activeMark = (topOpponentIndex === state.active_player_index) ? ' ▶ am Zug' : '';
+            var elimMark = topP.eliminated ? ' ☠ raus' : '';
+            document.getElementById('player-top-name').textContent = topP.name + ' (Opponent)' + activeMark + elimMark;
+            document.getElementById('life-name-top').textContent = topP.name;
+            renderPlayerZones(state, topOpponentIndex, 'top');
+            document.getElementById('life-total-top').textContent = topP.life;
+            renderCommanderDamage(state, topOpponentIndex, 'top');
+            renderExtraCounters(state, topOpponentIndex, 'top');
+            stampTopSlotPlayerIndex(topOpponentIndex);
+            renderTopSwitchButtons(state);
+            // Share the currently-viewed opponent with the Command window
+            // (used by "Copy Bot's Hand" / mulligan to target this bot).
+            try {
+                localStorage.setItem('mtg-top-opponent', String(topOpponentIndex));
+            } catch (e) { /* localStorage blocked — Command falls back to active player */ }
         }
 
         // Turn / phase
@@ -825,6 +945,9 @@
         if (!zoneEl) return;
         var container = zoneEl.querySelector('.zone-cards');
         if (!container) return;
+
+        // DOM slot this battlefield belongs to ('0' = your board, 'top' = opponent)
+        var bfSlot = zoneId.replace('zone-battlefield-', '');
 
         // Preserve scroll positions across re-render (outer + each subzone)
         var savedScrollTop = container.scrollTop;
@@ -864,9 +987,8 @@
         var landsDiv = makeSubzone('bf-subgroup bf-lands', 'Lands', 'land', lands);
         var otherDiv = makeSubzone('bf-subgroup bf-other', 'Other', 'other', other);
 
-        // Apply persisted split ratio
-        var savedRatio = parseFloat(localStorage.getItem('mtg-bf-split') || '50');
-        landsDiv.style.flex = '0 0 ' + savedRatio + '%';
+        // Apply this board's own split ratio (independent per slot)
+        landsDiv.style.flex = '0 0 ' + getBfSplit(bfSlot) + '%';
         otherDiv.style.flex = '1 1 auto';
 
         // Draggable splitter between Lands and Other
@@ -878,8 +1000,8 @@
             function onMove(moveEvt) {
                 var pct = ((moveEvt.clientX - rect.left) / rect.width) * 100;
                 pct = Math.max(10, Math.min(90, pct));
+                setBfSplit(bfSlot, pct);  // this board's own ratio (in-memory + localStorage)
                 landsDiv.style.flex = '0 0 ' + pct + '%';
-                localStorage.setItem('mtg-bf-split', pct.toFixed(1));
             }
             function onUp() {
                 document.removeEventListener('mousemove', onMove);
@@ -908,31 +1030,80 @@
     }
 
     /**
-     * Render all zones for a given player index.
+     * Render all zones for a given player index into the given DOM slot.
+     * slot defaults to the player index (used for the fixed bottom slot);
+     * the top slot passes 'top' so the same player's cards can be shown there.
      */
-    function renderPlayerZones(state, playerIndex) {
+    function renderPlayerZones(state, playerIndex, slot) {
+        if (slot === undefined) slot = playerIndex;
+        var isOpponentSlot = (slot === 'top');
+
         // Battlefield (grouped by type)
-        renderBattlefieldZone('zone-battlefield-' + playerIndex, getCardsInZone(state, 'battlefield', playerIndex));
+        renderBattlefieldZone('zone-battlefield-' + slot, getCardsInZone(state, 'battlefield', playerIndex));
 
         // Hand
-        renderHandZone(state, playerIndex);
+        renderHandZone(state, playerIndex, slot, isOpponentSlot);
 
         // Command zone
-        renderZoneCards('zone-command-' + playerIndex, getCardsInZone(state, 'command_zone', playerIndex));
+        renderZoneCards('zone-command-' + slot, getCardsInZone(state, 'command_zone', playerIndex));
 
         // Library count
         var libCards = getCardsInZone(state, 'library', playerIndex);
-        document.getElementById('lib-count-' + playerIndex).textContent = libCards.length;
+        document.getElementById('lib-count-' + slot).textContent = libCards.length;
 
         // Graveyard: show top card + count
         var gyCards = getCardsInZone(state, 'graveyard', playerIndex);
-        document.getElementById('gy-count-' + playerIndex).textContent = gyCards.length;
-        renderStackZone('zone-graveyard-' + playerIndex, gyCards);
+        document.getElementById('gy-count-' + slot).textContent = gyCards.length;
+        renderStackZone('zone-graveyard-' + slot, gyCards);
 
         // Exile: show cards that are in standard exile (not linked)
         var exCards = getCardsInZone(state, 'exile', playerIndex);
-        document.getElementById('ex-count-' + playerIndex).textContent = exCards.length;
-        renderStackZone('zone-exile-' + playerIndex, exCards);
+        document.getElementById('ex-count-' + slot).textContent = exCards.length;
+        renderStackZone('zone-exile-' + slot, exCards);
+    }
+
+    /**
+     * Stamp the live player index onto all interactive elements in the top slot,
+     * so drag-drop targets, life/untap/counter buttons act on the shown opponent.
+     */
+    function stampTopSlotPlayerIndex(playerIndex) {
+        ['#player-top', '#life-counter-top'].forEach(function (sel) {
+            var root = document.querySelector(sel);
+            if (!root) return;
+            if (root.hasAttribute('data-player-index')) {
+                root.setAttribute('data-player-index', String(playerIndex));
+            }
+            root.querySelectorAll('[data-player-index]').forEach(function (el) {
+                el.setAttribute('data-player-index', String(playerIndex));
+            });
+        });
+    }
+
+    /**
+     * Render the opponent-switch buttons (one chip per opponent: name + life).
+     * The active-turn opponent and the currently-viewed one are highlighted.
+     */
+    function renderTopSwitchButtons(state) {
+        var container = document.getElementById('top-switch-buttons');
+        if (!container) return;
+        container.innerHTML = '';
+        var numPlayers = state.players.length;
+        for (var i = 1; i < numPlayers; i++) {
+            (function (idx) {
+                var p = state.players[idx];
+                var btn = document.createElement('button');
+                btn.className = 'top-switch-btn';
+                if (idx === topOpponentIndex) btn.classList.add('viewing');
+                if (idx === state.active_player_index) btn.classList.add('active-turn');
+                btn.textContent = p.name + ' (' + p.life + ')';
+                btn.title = 'Show ' + p.name + "'s board";
+                btn.addEventListener('click', function () {
+                    topOpponentIndex = idx;
+                    renderBoard();
+                });
+                container.appendChild(btn);
+            })(i);
+        }
     }
 
     /**
@@ -956,8 +1127,9 @@
      * Render hand zone. For player 0 (opponent), shows card backs by default.
      * For player 1 (human), shows actual cards.
      */
-    function renderHandZone(state, playerIndex) {
-        var zoneId = 'zone-hand-' + playerIndex;
+    function renderHandZone(state, playerIndex, slot, isOpponentSlot) {
+        if (slot === undefined) slot = playerIndex;
+        var zoneId = 'zone-hand-' + slot;
         var zoneEl = document.getElementById(zoneId);
         if (!zoneEl) return;
         var container = zoneEl.querySelector('.zone-cards');
@@ -965,26 +1137,27 @@
 
         var savedScrollTop = container.scrollTop;
         var handCards = getCardsInZone(state, 'hand', playerIndex);
-        document.getElementById('hand-count-' + playerIndex).textContent = handCards.length;
+        document.getElementById('hand-count-' + slot).textContent = handCards.length;
 
         container.innerHTML = '';
 
-        // LLM hand (player 1): optionally show as numbered card backs
-        var hideOpponentHand = playerIndex === 1 &&
+        // Opponent hand (top slot): optionally show as numbered card backs
+        var hideOpponentHand = isOpponentSlot &&
             document.getElementById('hide-opponent-hand') &&
             document.getElementById('hide-opponent-hand').checked;
 
         if (hideOpponentHand) {
-            // Use frozen hand order from GameState for stable numbering
-            var frozen = (currentState && currentState.frozen_hand_order) || [];
-            // Fallback: if frozen is empty (old save / toggled mid-game), use current order
-            if (frozen.length === 0) {
-                frozen = handCards.map(function (c) { return c.id; });
-            }
+            // Stable numbering: each player has its OWN frozen order (refrozen only
+            // on turn change / mulligan), so playing a card never renumbers the rest
+            // within a turn. Mirrors generate_bot_hand(). Local copy + append for any
+            // not-yet-frozen (e.g. freshly drawn) cards.
+            var frozenOrders = (currentState && currentState.frozen_hand_orders) || {};
+            var frozenOrder = frozenOrders[playerIndex] || [];
+            var order = frozenOrder.length > 0 ? frozenOrder.slice() : handCards.map(function (c) { return c.id; });
 
             handCards.forEach(function (card) {
-                var frozenIdx = frozen.indexOf(card.id);
-                var displayNum = frozenIdx !== -1 ? frozenIdx + 1 : frozen.length + 1;
+                if (order.indexOf(card.id) === -1) order.push(card.id);
+                var displayNum = order.indexOf(card.id) + 1;
 
                 var back = document.createElement('div');
                 back.className = 'hidden-hand-card card';
@@ -1032,8 +1205,9 @@
     /**
      * Render commander damage sub-counters.
      */
-    function renderCommanderDamage(state, playerIndex) {
-        var row = document.getElementById('cmdr-dmg-' + playerIndex);
+    function renderCommanderDamage(state, playerIndex, slot) {
+        if (slot === undefined) slot = playerIndex;
+        var row = document.getElementById('cmdr-dmg-' + slot);
         if (!row) return;
         var player = state.players[playerIndex];
         if (!player) return;
@@ -1053,8 +1227,9 @@
     /**
      * Render extra player counters (Poison, Experience, etc.) as pills.
      */
-    function renderExtraCounters(state, playerIndex) {
-        var row = document.getElementById('extra-counters-' + playerIndex);
+    function renderExtraCounters(state, playerIndex, slot) {
+        if (slot === undefined) slot = playerIndex;
+        var row = document.getElementById('extra-counters-' + slot);
         if (!row) return;
         var player = state.players[playerIndex];
         if (!player) return;
@@ -1363,11 +1538,11 @@
         var menu = document.getElementById('library-context-menu');
         menu.style.display = 'block';
 
-        // Hide Mulligan after turn 1 to prevent accidental clicks
+        // Hide Mulligan from turn 3 onwards
         var mulliganItem = menu.querySelector('[data-action="mulligan"]');
         if (mulliganItem) {
             var turn = currentState ? (currentState.turn || 0) : 0;
-            mulliganItem.style.display = (turn <= 1) ? 'block' : 'none';
+            mulliganItem.style.display = (turn <= 2) ? 'block' : 'none';
         }
 
         clampToViewport(menu, e.clientX + 2, e.clientY + 2);
@@ -1560,12 +1735,19 @@
             case 'copy_oracle_text':
                 var ctxCard = currentState && currentState.cards[cardId];
                 if (ctxCard) {
-                    var text = ctxCard.name;
-                    if (ctxCard.mana_cost) text += ' ' + ctxCard.mana_cost;
-                    text += '\n' + ctxCard.type_line;
-                    if (ctxCard.oracle_text) text += '\n\n' + ctxCard.oracle_text;
-                    if (ctxCard.power !== null && ctxCard.toughness !== null) text += '\n\n' + ctxCard.power + '/' + ctxCard.toughness;
-                    if (ctxCard.loyalty !== null) text += '\n\nLoyalty: ' + ctxCard.loyalty;
+                    var formatFace = function (face) {
+                        var s = face.name || '';
+                        if (face.mana_cost) s += ' ' + face.mana_cost;
+                        if (face.type_line) s += '\n' + face.type_line;
+                        if (face.oracle_text) s += '\n\n' + face.oracle_text;
+                        if (face.power != null && face.toughness != null) s += '\n\n' + face.power + '/' + face.toughness;
+                        if (face.loyalty != null) s += '\n\nLoyalty: ' + face.loyalty;
+                        return s;
+                    };
+                    var text = formatFace(ctxCard);
+                    if (ctxCard.back_face && ctxCard.back_face.name) {
+                        text += '\n\n--- // ---\n\n' + formatFace(ctxCard.back_face);
+                    }
                     var fallbackCopy = function(t) {
                         var ta = document.createElement('textarea');
                         ta.value = t;
@@ -1711,6 +1893,9 @@
 
             case 'mulligan':
                 MTGSocket.send({ action: 'mulligan', player_index: pi });
+                var _mulliganName = currentState && currentState.players && currentState.players[pi]
+                    ? currentState.players[pi].name : 'Spieler ' + (pi + 1);
+                showInfoToast(_mulliganName + ' nimmt einen Mulligan (7 neue Karten)');
                 break;
         }
 
@@ -1987,13 +2172,393 @@
         document.getElementById('arrow-prompt').style.display = 'none';
     }
 
+    /**
+     * Parse first signed P/T modifier (e.g. "+2/+2", "-1/-1") from the active
+     * face's oracle text. Returns {p, t} or null if nothing matches.
+     * "X" placeholders are ignored — caller falls back to +1/+1.
+     */
+    function parseAutoBuffFromOracle(card) {
+        if (!card) return null;
+        var bf = card.back_face || {};
+        var isTransformed = card.transformed && bf.name;
+        var text = isTransformed ? (bf.oracle_text || '') : (card.oracle_text || '');
+        if (!text) return null;
+        var m = text.match(/([+-])(\d+)\s*\/\s*([+-])(\d+)/);
+        if (!m) return null;
+        var p = parseInt(m[2], 10) * (m[1] === '-' ? -1 : 1);
+        var t = parseInt(m[4], 10) * (m[3] === '-' ? -1 : 1);
+        return { p: p, t: t };
+    }
+
+    /* ---- Phase-Stopper persistence ----
+       ignore  = cards user opted-out via checkbox
+       always  = cards user manually flagged (always warn, even without text match)
+    */
+    var PHASE_STOPPER_IGNORE_KEY = 'mtg_phase_stopper_ignore';
+    var PHASE_STOPPER_ALWAYS_KEY = 'mtg_phase_stopper_always';
+
+    function _readPhaseStopperSet(key) {
+        try {
+            var raw = localStorage.getItem(key);
+            return new Set(raw ? JSON.parse(raw) : []);
+        } catch (e) {
+            return new Set();
+        }
+    }
+
+    function _writePhaseStopperSet(key, set) {
+        try {
+            localStorage.setItem(key, JSON.stringify(Array.from(set)));
+        } catch (e) { /* quota or disabled storage — silently skip */ }
+    }
+
+    function getIgnoredPhaseStoppers() { return _readPhaseStopperSet(PHASE_STOPPER_IGNORE_KEY); }
+    function getAlwaysPhaseStoppers() { return _readPhaseStopperSet(PHASE_STOPPER_ALWAYS_KEY); }
+
+    function setPhaseStopperIgnored(name, ignored) {
+        var s = getIgnoredPhaseStoppers();
+        if (ignored) s.add(name); else s.delete(name);
+        _writePhaseStopperSet(PHASE_STOPPER_IGNORE_KEY, s);
+    }
+
+    function setPhaseStopperAlways(name, on) {
+        var s = getAlwaysPhaseStoppers();
+        if (on) s.add(name); else s.delete(name);
+        _writePhaseStopperSet(PHASE_STOPPER_ALWAYS_KEY, s);
+    }
+
+    /**
+     * Scan all battlefield cards for upkeep / draw-step trigger language in
+     * the active face's oracle text, plus any cards on the user's manual
+     * "always warn" list. Returns {upkeep, draw, manual} — each entry has
+     * { name, owner_index, controller_index, ignored }.
+     * Ignored cards remain in the result so the modal can show them unchecked
+     * for easy re-enable. Filtering happens at the call site.
+     * Auto-match regex is intentionally broad ('upkeep', 'draw step' substrings).
+     */
+    function findPhaseStoppers() {
+        var result = { upkeep: [], draw: [], manual: [] };
+        if (!currentState || !currentState.cards) return result;
+        var upkeepRe = /\bupkeep\b/i;
+        var drawRe = /\bdraw step\b/i;
+        var ignored = getIgnoredPhaseStoppers();
+        var always = getAlwaysPhaseStoppers();
+
+        // Manual entries: find in ANY zone (or mark as not in game)
+        always.forEach(function (name) {
+            var card = findCardByName(name);
+            result.manual.push({
+                name: name,
+                card_id: card ? card.id : null,
+                owner_index: card ? card.owner_index : null,
+                controller_index: card ? card.controller_index : null,
+                ignored: ignored.has(name)
+            });
+        });
+
+        // Auto-detect upkeep/draw triggers on the battlefield (skip manually-listed names)
+        Object.keys(currentState.cards).forEach(function (cid) {
+            var card = currentState.cards[cid];
+            if (!card || card.zone !== 'battlefield') return;
+            var bf = card.back_face || {};
+            var isTransformed = card.transformed && bf.name;
+            var text = isTransformed ? (bf.oracle_text || '') : (card.oracle_text || '');
+            var name = isTransformed ? bf.name : card.name;
+            if (always.has(name)) return; // already in manual
+            var entry = {
+                name: name,
+                card_id: card.id,
+                owner_index: card.owner_index,
+                controller_index: card.controller_index,
+                ignored: ignored.has(name)
+            };
+            if (text) {
+                if (upkeepRe.test(text)) result.upkeep.push(entry);
+                if (drawRe.test(text)) result.draw.push(entry);
+            }
+        });
+        return result;
+    }
+
+    function hasActivePhaseStopper(triggers) {
+        var anyActive = function (e) { return !e.ignored; };
+        return triggers.upkeep.some(anyActive)
+            || triggers.draw.some(anyActive)
+            || triggers.manual.some(anyActive);
+    }
+
+    /**
+     * Find the first card matching the given name in any zone (active face
+     * for transformed cards). Returns the card object or null.
+     * Prefers battlefield cards when multiple zones match.
+     */
+    function findCardByName(name) {
+        if (!currentState || !currentState.cards || !name) return null;
+        var ids = Object.keys(currentState.cards);
+        var fallback = null;
+        for (var i = 0; i < ids.length; i++) {
+            var c = currentState.cards[ids[i]];
+            if (!c) continue;
+            var bf = c.back_face || {};
+            var isTransformed = c.transformed && bf.name;
+            var displayName = isTransformed ? bf.name : c.name;
+            if (displayName === name) {
+                if (c.zone === 'battlefield') return c;
+                if (!fallback) fallback = c;
+            }
+        }
+        return fallback;
+    }
+
+    function findBattlefieldCardByName(name) {
+        if (!currentState || !currentState.cards || !name) return null;
+        var ids = Object.keys(currentState.cards);
+        for (var i = 0; i < ids.length; i++) {
+            var c = currentState.cards[ids[i]];
+            if (!c || c.zone !== 'battlefield') continue;
+            var bf = c.back_face || {};
+            var isTransformed = c.transformed && bf.name;
+            var displayName = isTransformed ? bf.name : c.name;
+            if (displayName === name) return c;
+        }
+        return null;
+    }
+
+    /**
+     * Bind hover-preview (mouseenter/mousemove/mouseleave) to a row element.
+     * cardResolver is a function () → card-object-or-null (called on hover).
+     * Adds a 'card-hoverable' visual cue if a card is resolvable.
+     */
+    function bindRowHoverPreview(rowEl, cardResolver) {
+        if (!rowEl || !cardResolver) return;
+        rowEl.addEventListener('mouseenter', function (e) {
+            var c = cardResolver();
+            if (c) showCardPreview(c, e);
+        });
+        rowEl.addEventListener('mousemove', function (e) {
+            if (previewCardRef) moveCardPreview(e);
+        });
+        rowEl.addEventListener('mouseleave', function () {
+            hideCardPreview();
+        });
+    }
+
+    function openPassTurnModal(triggers) {
+        var listEl = document.getElementById('pass-turn-modal-list');
+        listEl.innerHTML = '';
+
+        var renderGroup = function (label, entries) {
+            if (!entries.length) return;
+            var section = document.createElement('div');
+            section.style.marginBottom = '8px';
+            var title = document.createElement('strong');
+            title.textContent = label + ':';
+            section.appendChild(title);
+            var ul = document.createElement('ul');
+            ul.style.cssText = 'margin:4px 0 0 4px; padding:0;';
+            entries.forEach(function (e) {
+                var who = (e.controller_index === 0) ? 'du' : 'Gegner';
+                var li = document.createElement('li');
+                li.style.cssText = 'list-style:none; margin:2px 0;' + (e.ignored ? ' opacity:0.5;' : '');
+                li.innerHTML =
+                    '<label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;" title="Hakerl entfernen → Karte zukünftig nicht mehr melden. Wieder anhaken → Meldung reaktivieren.">' +
+                    '<input type="checkbox" class="phase-stopper-toggle" data-card-name="' + escapeHtml(e.name) + '"' + (e.ignored ? '' : ' checked') + '>' +
+                    '<span>' + escapeHtml(e.name) + ' <span style="opacity:0.6;">(' + who + ')</span></span>' +
+                    '</label>';
+                // Hover preview — resolve by card_id (fall back to name lookup)
+                bindRowHoverPreview(li, function () {
+                    if (e.card_id && currentState && currentState.cards && currentState.cards[e.card_id]) {
+                        return currentState.cards[e.card_id];
+                    }
+                    return findCardByName(e.name);
+                });
+                ul.appendChild(li);
+            });
+            section.appendChild(ul);
+            listEl.appendChild(section);
+        };
+
+        renderGroup('📌 Manuell gesetzt', triggers.manual);
+        renderGroup('Upkeep-Trigger', triggers.upkeep);
+        renderGroup('Draw-Trigger', triggers.draw);
+
+        // Bind checkbox listeners — persist immediately on toggle
+        listEl.querySelectorAll('.phase-stopper-toggle').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                var name = cb.dataset.cardName;
+                if (!name) return;
+                setPhaseStopperIgnored(name, !cb.checked);
+                // Sync other rows with same name + update dimming
+                var sel = '.phase-stopper-toggle[data-card-name="' + name.replace(/"/g, '\\"') + '"]';
+                listEl.querySelectorAll(sel).forEach(function (other) {
+                    if (other !== cb) other.checked = cb.checked;
+                    var li = other.closest('li');
+                    if (li) li.style.opacity = cb.checked ? '' : '0.5';
+                });
+            });
+        });
+        document.getElementById('pass-turn-modal-overlay').style.display = 'flex';
+    }
+
+    function closePassTurnModal() {
+        document.getElementById('pass-turn-modal-overlay').style.display = 'none';
+    }
+
+    function openPhaseStopperSettings() {
+        renderPhaseStopperSettings();
+        // Populate autocomplete datalist from all cards in current game state
+        var dl = document.getElementById('phase-stopper-datalist');
+        if (dl && currentState && currentState.cards) {
+            var seen = {};
+            var options = [];
+            Object.keys(currentState.cards).forEach(function (cid) {
+                var c = currentState.cards[cid];
+                if (!c) return;
+                var bf = c.back_face || {};
+                var isTransformed = c.transformed && bf.name;
+                var name = isTransformed ? bf.name : c.name;
+                if (name && !seen[name]) {
+                    seen[name] = true;
+                    options.push(name);
+                }
+                // Also add back-face name if available
+                if (bf.name && !seen[bf.name]) {
+                    seen[bf.name] = true;
+                    options.push(bf.name);
+                }
+            });
+            options.sort();
+            dl.innerHTML = options.map(function (n) {
+                return '<option value="' + escapeHtml(n) + '">';
+            }).join('');
+        }
+        document.getElementById('phase-stopper-settings-overlay').style.display = 'flex';
+        var addInp = document.getElementById('phase-stopper-always-input');
+        if (addInp) { addInp.value = ''; addInp.focus(); }
+    }
+
+    function closePhaseStopperSettings() {
+        document.getElementById('phase-stopper-settings-overlay').style.display = 'none';
+    }
+
+    /**
+     * Build the unified settings list. Same look as the pass-turn modal, but:
+     * - Manuell section contains ALL always-list entries (regardless of battlefield)
+     * - Stummgeschaltet section contains ALL ignored entries (regardless of battlefield)
+     * - Upkeep/Draw contain currently-on-battlefield matches as usual
+     * - Search filters all rows live
+     */
+    function renderPhaseStopperSettings() {
+        var listEl = document.getElementById('phase-stopper-settings-list');
+        var triggers = findPhaseStoppers();
+
+        // Build a name → controller_index map for entries we know
+        // (for nicer labelling — falls back to "— nicht im Spiel —")
+        var indexByName = {};
+        triggers.upkeep.concat(triggers.draw, triggers.manual).forEach(function (e) {
+            if (!(e.name in indexByName)) indexByName[e.name] = e;
+        });
+
+        // Manual entries: take from always-set, decorate with battlefield info if available
+        var manualEntries = Array.from(getAlwaysPhaseStoppers()).sort().map(function (name) {
+            var bfEntry = indexByName[name];
+            return bfEntry || { name: name, controller_index: null, ignored: getIgnoredPhaseStoppers().has(name), card_id: null };
+        });
+
+        // Ignored entries not currently matching anywhere
+        var ignored = getIgnoredPhaseStoppers();
+        var onScreen = {};
+        manualEntries.concat(triggers.upkeep, triggers.draw).forEach(function (e) { onScreen[e.name] = true; });
+        var orphanIgnoredEntries = Array.from(ignored).filter(function (n) { return !onScreen[n]; }).sort().map(function (name) {
+            return { name: name, controller_index: null, ignored: true, card_id: null };
+        });
+
+        listEl.innerHTML = '';
+
+        var renderGroup = function (label, entries, removable) {
+            if (!entries.length) return;
+            var section = document.createElement('div');
+            section.style.marginBottom = '8px';
+            var title = document.createElement('strong');
+            title.textContent = label + ':';
+            section.appendChild(title);
+            var ul = document.createElement('ul');
+            ul.style.cssText = 'margin:4px 0 0 4px; padding:0;';
+            entries.forEach(function (e) {
+                var li = document.createElement('li');
+                li.style.cssText = 'list-style:none; margin:2px 0; display:flex; align-items:center; gap:6px;' + (e.ignored ? ' opacity:0.5;' : '');
+                var safe = escapeHtml(e.name);
+                var who;
+                var ctrlPlayers = (currentState && currentState.players) || [];
+                if (e.controller_index === 0) who = ' <span style="opacity:0.6;">(du)</span>';
+                else if (e.controller_index >= 1 && e.controller_index < ctrlPlayers.length)
+                    who = ' <span style="opacity:0.6;">(' + escapeHtml(ctrlPlayers[e.controller_index].name) + ')</span>';
+                else who = ' <span style="opacity:0.45; font-style:italic;">— nicht im Spiel</span>';
+                var labelHtml =
+                    '<label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; flex:1;" title="Hakerl entfernen → Karte zukünftig nicht melden. Wieder anhaken → reaktivieren.">' +
+                    '<input type="checkbox" class="phase-stopper-toggle" data-card-name="' + safe + '"' + (e.ignored ? '' : ' checked') + '>' +
+                    '<span>' + safe + who + '</span></label>';
+                li.innerHTML = labelHtml;
+                if (removable) {
+                    var rm = document.createElement('button');
+                    rm.className = 'btn btn-sm btn-secondary';
+                    rm.textContent = '×';
+                    rm.title = 'Aus manueller Liste entfernen';
+                    rm.style.padding = '0 8px';
+                    rm.addEventListener('click', function (ev) {
+                        ev.stopPropagation();
+                        setPhaseStopperAlways(e.name, false);
+                        renderPhaseStopperSettings();
+                    });
+                    li.appendChild(rm);
+                }
+                bindRowHoverPreview(li, function () {
+                    if (e.card_id && currentState && currentState.cards && currentState.cards[e.card_id]) {
+                        return currentState.cards[e.card_id];
+                    }
+                    return findCardByName(e.name);
+                });
+                ul.appendChild(li);
+            });
+            section.appendChild(ul);
+            listEl.appendChild(section);
+        };
+
+        renderGroup('📌 Manuell gesetzt', manualEntries, true);
+        renderGroup('Upkeep-Trigger', triggers.upkeep, false);
+        renderGroup('Draw-Trigger', triggers.draw, false);
+        renderGroup('🚫 Stummgeschaltet (nicht aktiv)', orphanIgnoredEntries, false);
+
+        if (!listEl.children.length) {
+            listEl.innerHTML = '<div style="opacity:0.5; font-style:italic; padding:8px;">Keine Karten zu verwalten.</div>';
+        }
+
+        // Bind checkbox listeners (mirror pass-turn-modal behavior)
+        listEl.querySelectorAll('.phase-stopper-toggle').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                var name = cb.dataset.cardName;
+                if (!name) return;
+                setPhaseStopperIgnored(name, !cb.checked);
+                renderPhaseStopperSettings();
+            });
+        });
+    }
+
     function handleArrowTarget(targetCardId) {
         if (!arrowSourceCardId) return;
-        MTGSocket.send({
+        var sourceCard = currentState && currentState.cards
+            ? currentState.cards[arrowSourceCardId] : null;
+        var buff = parseAutoBuffFromOracle(sourceCard);
+        var payload = {
             action: 'create_arrow',
             source_card_id: arrowSourceCardId,
             target_card_id: targetCardId
-        });
+        };
+        if (buff) {
+            payload.buff_power = buff.p;
+            payload.buff_toughness = buff.t;
+        }
+        MTGSocket.send(payload);
         cancelArrowMode();
     }
 
@@ -2098,7 +2663,9 @@
                 text.setAttribute('font-weight', 'bold');
                 text.setAttribute('text-anchor', 'middle');
                 text.setAttribute('dominant-baseline', 'middle');
-                text.textContent = '+' + (arrow.buff_power || 0) + '/+' + (arrow.buff_toughness || 0);
+                var bp = arrow.buff_power || 0;
+                var bt = arrow.buff_toughness || 0;
+                text.textContent = (bp >= 0 ? '+' : '') + bp + '/' + (bt >= 0 ? '+' : '') + bt;
                 svg.appendChild(text);
             }
         });
@@ -2457,8 +3024,10 @@
         document.querySelectorAll('.life-total').forEach(function (el) {
             el.addEventListener('click', function (e) {
                 e.stopPropagation();
-                var piStr = this.id.replace('life-total-', '');
-                var pi = parseInt(piStr, 10);
+                // Prefer the live data-player-index (top slot is dynamic); fall back to id
+                var pi = this.dataset.playerIndex !== undefined
+                    ? parseInt(this.dataset.playerIndex, 10)
+                    : parseInt(this.id.replace('life-total-', ''), 10);
                 var current = parseInt(this.textContent, 10);
                 var input = prompt('Set life total (or +N/-N for delta):', current);
                 if (input === null) return;
@@ -2498,9 +3067,50 @@
             MTGSocket.send({ action: 'next_phase' });
         });
 
-        // Pass turn button
+        // Pass turn button — scan for upkeep/draw triggers first
         document.getElementById('btn-pass-turn').addEventListener('click', function () {
+            var triggers = findPhaseStoppers();
+            if (hasActivePhaseStopper(triggers)) {
+                openPassTurnModal(triggers);
+            } else {
+                MTGSocket.send({ action: 'pass_turn' });
+            }
+        });
+
+        // Pass-turn modal buttons
+        document.getElementById('pass-turn-stop-upkeep').addEventListener('click', function () {
+            closePassTurnModal();
+            MTGSocket.send({ action: 'pass_turn', stop_at_phase: 'upkeep' });
+        });
+        document.getElementById('pass-turn-stop-draw').addEventListener('click', function () {
+            closePassTurnModal();
+            MTGSocket.send({ action: 'pass_turn', stop_at_phase: 'draw' });
+        });
+        document.getElementById('pass-turn-continue').addEventListener('click', function () {
+            closePassTurnModal();
             MTGSocket.send({ action: 'pass_turn' });
+        });
+        document.getElementById('pass-turn-cancel').addEventListener('click', closePassTurnModal);
+
+        // Phase-stopper settings
+        document.getElementById('btn-phase-stopper-settings').addEventListener('click', openPhaseStopperSettings);
+        document.getElementById('phase-stopper-settings-close').addEventListener('click', closePhaseStopperSettings);
+        var addBtn = document.getElementById('phase-stopper-always-add');
+        var addInput = document.getElementById('phase-stopper-always-input');
+        var addManual = function () {
+            var v = addInput.value.trim();
+            if (!v) return;
+            // If user adds a name that's currently ignored, un-ignore it so the
+            // add actually takes effect immediately
+            if (getIgnoredPhaseStoppers().has(v)) setPhaseStopperIgnored(v, false);
+            setPhaseStopperAlways(v, true);
+            addInput.value = '';
+            addInput.focus();
+            renderPhaseStopperSettings();
+        };
+        addBtn.addEventListener('click', addManual);
+        addInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); addManual(); }
         });
 
         // Untap all buttons (one per player)
@@ -2531,39 +3141,34 @@
        ================================================================== */
 
     function setupLibraryInteractions() {
-        for (var i = 0; i < 2; i++) {
-            (function (pi) {
-                var libZone = document.getElementById('zone-library-' + pi);
-                if (!libZone) return;
-
-                // Click: draw a card
+        BOARD_SLOTS.forEach(function (slot) {
+            var libZone = document.getElementById('zone-library-' + slot);
+            if (libZone) {
+                // Click: draw a card (player resolved live from slot)
                 libZone.addEventListener('click', function (e) {
                     e.stopPropagation();
-                    MTGSocket.send({ action: 'draw_card', player_index: pi, count: 1 });
+                    MTGSocket.send({ action: 'draw_card', player_index: slotPlayerIndex(slot), count: 1 });
                 });
 
                 // Right-click: library context menu
                 libZone.addEventListener('contextmenu', function (e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    showLibraryContextMenu(e, pi);
+                    showLibraryContextMenu(e, slotPlayerIndex(slot));
                 });
-            })(i);
-        }
+            }
 
-        // Battlefield right-click (not on a card) → battlefield context menu
-        for (var bi = 0; bi < 2; bi++) {
-            (function (pi) {
-                var bfZone = document.getElementById('zone-battlefield-' + pi);
-                if (!bfZone) return;
+            // Battlefield right-click (not on a card) → battlefield context menu
+            var bfZone = document.getElementById('zone-battlefield-' + slot);
+            if (bfZone) {
                 bfZone.addEventListener('contextmenu', function (e) {
                     if (e.target.closest('.card')) return; // card has its own menu
                     e.preventDefault();
                     e.stopPropagation();
-                    showBattlefieldContextMenu(e, pi);
+                    showBattlefieldContextMenu(e, slotPlayerIndex(slot));
                 });
-            })(bi);
-        }
+            }
+        });
     }
 
     /* ==================================================================
@@ -2571,35 +3176,35 @@
        ================================================================== */
 
     function setupZoneViewers() {
-        for (var i = 0; i < 2; i++) {
-            (function (pi) {
-                // Graveyard click
-                var gyZone = document.getElementById('zone-graveyard-' + pi);
-                if (gyZone) {
-                    gyZone.addEventListener('click', function (e) {
-                        e.stopPropagation();
-                        if (!currentState) return;
-                        var cards = getCardsInZone(currentState, 'graveyard', pi);
-                        if (cards.length > 0) {
-                            showZoneViewer('Graveyard — ' + getPlayerName(pi), cards, 'graveyard');
-                        }
-                    });
-                }
+        BOARD_SLOTS.forEach(function (slot) {
+            // Graveyard click
+            var gyZone = document.getElementById('zone-graveyard-' + slot);
+            if (gyZone) {
+                gyZone.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (!currentState) return;
+                    var pi = slotPlayerIndex(slot);
+                    var cards = getCardsInZone(currentState, 'graveyard', pi);
+                    if (cards.length > 0) {
+                        showZoneViewer('Graveyard — ' + getPlayerName(pi), cards, 'graveyard');
+                    }
+                });
+            }
 
-                // Exile click
-                var exZone = document.getElementById('zone-exile-' + pi);
-                if (exZone) {
-                    exZone.addEventListener('click', function (e) {
-                        e.stopPropagation();
-                        if (!currentState) return;
-                        var cards = getCardsInZone(currentState, 'exile', pi);
-                        if (cards.length > 0) {
-                            showZoneViewer('Exile — ' + getPlayerName(pi), cards, 'exile');
-                        }
-                    });
-                }
-            })(i);
-        }
+            // Exile click
+            var exZone = document.getElementById('zone-exile-' + slot);
+            if (exZone) {
+                exZone.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    if (!currentState) return;
+                    var pi = slotPlayerIndex(slot);
+                    var cards = getCardsInZone(currentState, 'exile', pi);
+                    if (cards.length > 0) {
+                        showZoneViewer('Exile — ' + getPlayerName(pi), cards, 'exile');
+                    }
+                });
+            }
+        });
     }
 
     function getPlayerName(pi) {
@@ -3415,6 +4020,16 @@
         // Connect WebSocket
         if (window.MTGSocket) {
             MTGSocket.onStateUpdate(function (state) {
+                // On a turn change (active player changed), auto-show the new active
+                // player on the top board if it's an opponent. Only on actual change
+                // so it never overrides a manual switch during ordinary state updates.
+                if (state && typeof state.active_player_index === 'number'
+                        && state.active_player_index !== lastActivePlayerIndex) {
+                    if (state.active_player_index >= 1) {
+                        topOpponentIndex = state.active_player_index;
+                    }
+                    lastActivePlayerIndex = state.active_player_index;
+                }
                 currentState = state;
                 scheduleRender();
                 updateConnectionStatus();

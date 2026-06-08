@@ -5,9 +5,55 @@ Supports Partner commanders (multiple Commander: lines).
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.scryfall import get_card_by_name
+
+
+# Trailing set/collector annotation as exported by ManaBox / Arena / Moxfield:
+#   "Card Name (C21) 275"      classic Arena
+#   "Card Name (cmr) 12"       lowercase set code (ManaBox)
+#   "Card Name (LTR) 275a"     collector number with letter suffix
+#   "Card Name (MOM) 281 *F*"  trailing foil marker
+# Set code: 2-6 alphanumerics in parens. Collector: digits/letters/★/dashes.
+# An optional foil/finish marker like *F* or *E* may follow.
+_SET_COLLECTOR_RE = re.compile(
+    r"\s*\(([A-Za-z0-9]{2,6})\)\s*([0-9A-Za-z★\-]+)?\s*(?:\*[A-Za-z]\*\s*)?$"
+)
+
+
+def _split_card_line(line: str) -> Tuple[int, str, Optional[str], Optional[str]]:
+    """
+    Split a single decklist line into its parts.
+
+    Returns (count, name, set_code, collector_number).
+
+    Accepts:
+      - "1 Sol Ring", "1x Sol Ring", "1X Sol Ring", "Sol Ring"
+      - trailing "(SET) collector" annotations (see _SET_COLLECTOR_RE)
+
+    set_code is upper-cased for consistency; set_code / collector_number are
+    None when the line carries no annotation. The annotation is parsed and
+    returned but is NOT (yet) used for card lookup — it's surfaced so a future
+    version can pick a specific printing / artwork.
+    """
+    count = 1
+    rest = line.strip()
+
+    count_match = re.match(r"^(\d+)\s*[xX]?\s+(.+)$", rest)
+    if count_match:
+        count = int(count_match.group(1))
+        rest = count_match.group(2).strip()
+
+    set_code: Optional[str] = None
+    collector: Optional[str] = None
+    sc_match = _SET_COLLECTOR_RE.search(rest)
+    if sc_match:
+        set_code = sc_match.group(1).upper()
+        collector = sc_match.group(2)
+        rest = rest[: sc_match.start()].strip()
+
+    return count, rest.strip(), set_code, collector
 
 
 def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
@@ -54,19 +100,10 @@ def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
         # Strip "Commander:" prefix — commander is selected via dropdown on setup page
         line = re.sub(r"^(?:COMMANDER|Commander|commander)\s*:\s*", "", line)
 
-        # Parse card line: optional count + card name
-        # Supports "1 Sol Ring", "1x Sol Ring", "1X Sol Ring"
-        card_match = re.match(r"^(\d+)[xX]?\s+(.+)$", line)
-        if card_match:
-            count = int(card_match.group(1))
-            name = card_match.group(2).strip()
-        else:
-            count = 1
-            name = line.strip()
-
-        # Remove set codes in parentheses, e.g., "Sol Ring (C21) 123"
-        # Common MTGO/Arena export format: "1 Sol Ring (C21) 256"
-        name = re.sub(r"\s*\([A-Z0-9]+\)\s*\d*\s*$", "", name).strip()
+        # Parse card line: optional count + name + optional "(SET) collector"
+        # annotation. The set/collector are extracted but ignored for lookup
+        # for now — kept on the entry so a later version can select a printing.
+        count, name, set_code, collector = _split_card_line(line)
 
         if not name:
             continue
@@ -77,6 +114,8 @@ def parse_decklist(text: str, scryfall_cache=None) -> Dict[str, Any]:
             "count": count,
             "found": card_data["found"],
             "scryfall_data": card_data["scryfall_data"],
+            "set_code": set_code,
+            "collector_number": collector,
         }
 
         if not card_data["found"]:

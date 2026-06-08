@@ -12,9 +12,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---- State ----
     let currentState = null;
-    let chatMessages = [];
     let copyToastTimeout = null;
     let recentActionsCount = parseInt(localStorage.getItem('recentActionsCount') || '1', 10);
+    // Conversation UI state
+    let activeConversationId = localStorage.getItem('mtg-active-conv') || null;
+    let draftPartnerIndex = null;       // partner for a new/empty (unsaved) conversation
+    let lastActivePlayerIndex = null;   // to detect turn changes
+    let llmBusy = false;
 
     // ---- DOM references ----
     const chatMessagesEl = document.getElementById('chat-messages');
@@ -48,11 +52,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---- State updates ----
     MTGSocket.onStateUpdate((state) => {
+        const firstState = (currentState === null);
         currentState = state;
         renderPhaseTracker(state);
         renderLifeCounters(state);
         renderActionLog(state.action_log || []);
         renderTurnInfo(state);
+
+        // Conversation handling: on a real turn change, open a fresh draft with
+        // the new active bot. On first load, restore the saved conversation
+        // (or draft the active bot) without overriding.
+        const newActive = state.active_player_index;
+        if (firstState) {
+            const saved = activeConversationId && findConv(activeConversationId);
+            if (!saved) { activeConversationId = null; draftPartnerIndex = (newActive >= 1) ? newActive : null; }
+        } else if (typeof newActive === 'number' && newActive !== lastActivePlayerIndex) {
+            // turn changed → new empty draft for the new active bot (if it's a bot)
+            activeConversationId = null;
+            draftPartnerIndex = (newActive >= 1) ? newActive : null;
+            localStorage.removeItem('mtg-active-conv');
+        }
+        if (typeof newActive === 'number') lastActivePlayerIndex = newActive;
+        renderChatUI();
         if (state.turn > 1 || botHandBtnClicked) {
             document.getElementById('copy-bot-hand').classList.remove('btn-blink');
         }
@@ -132,77 +153,237 @@ document.addEventListener('DOMContentLoaded', () => {
         requestSnapshot();
     });
 
-    // ---- Chat messages from server ----
-    MTGSocket.onChatMessage((data) => {
-        const sender = data.sender || 'AI';
-        const text = data.message || data.text || '';
-        addChatMessage(sender, text, 'assistant');
-    });
-
     // ---- Error messages ----
     MTGSocket.onError((message) => {
-        addChatMessage('System', message, 'system');
+        appendBubble('System', message, 'system');
     });
 
     // ================================================================
-    // Chat
+    // Conversations (per-bot LLM threads)
     // ================================================================
 
-    chatSendBtn.addEventListener('click', sendChatMessage);
-
-    chatInputEl.addEventListener('keydown', (e) => {
-        // Ctrl+Enter or Cmd+Enter to send
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            sendChatMessage();
+    function getConversations() { return (currentState && currentState.conversations) || []; }
+    function findConv(id) { return getConversations().find((c) => c.id === id) || null; }
+    function playerName(idx) {
+        if (currentState && currentState.players && currentState.players[idx]) {
+            return currentState.players[idx].name;
         }
-    });
+        return 'Player ' + (idx + 1);
+    }
+    function botIndices() {
+        const n = (currentState && currentState.players) ? currentState.players.length : 0;
+        const out = []; for (let i = 1; i < n; i++) out.push(i); return out;
+    }
+    function activePlayerIndex() { return currentState ? currentState.active_player_index : 0; }
+    function genitive(name) { return name + 's'; }  // Lexi → Lexis
 
-    function sendChatMessage() {
-        const msg = chatInputEl.value.trim();
-        if (!msg) return;
-
-        MTGSocket.send({ action: 'send_chat', message: msg });
-        addChatMessage('You', msg, 'user');
-        chatInputEl.value = '';
-        chatInputEl.focus();
+    // Partner the send box currently targets (active conversation's partner, or draft)
+    function targetPartnerIndex() {
+        if (activeConversationId) { const c = findConv(activeConversationId); if (c) return c.partner_index; }
+        return draftPartnerIndex;
     }
 
-    function addChatMessage(sender, text, type) {
-        const timestamp = new Date().toISOString();
-        const entry = { sender, text, type, timestamp };
-        chatMessages.push(entry);
-
-        // Hide empty message
-        if (chatEmptyEl) {
-            chatEmptyEl.style.display = 'none';
-        }
-
-        // Create message element
+    // Low-level: render one chat bubble, return the element
+    function appendBubble(sender, text, type) {
+        if (chatEmptyEl) chatEmptyEl.style.display = 'none';
         const msgEl = document.createElement('div');
         msgEl.className = 'chat-msg ' + (type || 'system');
-
         const senderEl = document.createElement('div');
         senderEl.className = 'chat-sender';
         senderEl.textContent = sender;
-
         const textEl = document.createElement('div');
         textEl.className = 'chat-text';
         textEl.textContent = text;
-
-        const timeEl = document.createElement('div');
-        timeEl.className = 'chat-time';
-        timeEl.textContent = MTGUtils.formatTime(timestamp);
-
         msgEl.appendChild(senderEl);
         msgEl.appendChild(textEl);
-        msgEl.appendChild(timeEl);
-
         chatMessagesEl.appendChild(msgEl);
-
-        // Auto-scroll to bottom
         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        return msgEl;
     }
+
+    function renderConversationTabs() {
+        const el = document.getElementById('conversation-tabs');
+        if (!el) return;
+        el.innerHTML = '';
+        getConversations().slice().reverse().forEach((c) => {
+            const tab = document.createElement('button');
+            tab.className = 'conv-tab' + (c.id === activeConversationId ? ' active' : '');
+            tab.textContent = playerName(c.partner_index) + ' · T' + c.created_turn;
+            tab.addEventListener('click', () => {
+                activeConversationId = c.id; draftPartnerIndex = null;
+                localStorage.setItem('mtg-active-conv', c.id);
+                renderChatUI(); chatInputEl.focus();
+            });
+            el.appendChild(tab);
+        });
+    }
+
+    function renderPartnerButtons() {
+        const el = document.getElementById('partner-buttons');
+        if (!el) return;
+        const target = targetPartnerIndex();
+        el.innerHTML = '';
+        botIndices().forEach((idx) => {
+            const b = document.createElement('button');
+            b.className = 'partner-btn' + (idx === target ? ' active' : '');
+            b.textContent = playerName(idx);
+            b.title = 'Neue Unterhaltung mit ' + playerName(idx);
+            b.addEventListener('click', () => {
+                draftPartnerIndex = idx; activeConversationId = null;
+                localStorage.removeItem('mtg-active-conv');
+                renderChatUI(); chatInputEl.focus();
+            });
+            el.appendChild(b);
+        });
+    }
+
+    function renderConversationMessages() {
+        chatMessagesEl.innerHTML = '';
+        const conv = activeConversationId ? findConv(activeConversationId) : null;
+        if (!conv || conv.messages.length === 0) {
+            chatEmptyEl.style.display = '';
+            chatMessagesEl.appendChild(chatEmptyEl);
+            const t = targetPartnerIndex();
+            chatEmptyEl.textContent = (t != null && t >= 1)
+                ? ('Neue Unterhaltung mit ' + playerName(t) + ' — schreib unten oder klick „' + genitive(playerName(t)) + ' Zug".')
+                : 'Wähle einen Partner.';
+            return;
+        }
+        chatEmptyEl.style.display = 'none';
+        const partnerName = playerName(conv.partner_index);
+        const convId = conv.id;
+        conv.messages.forEach((m, i) => {
+            // Detect the board-bearing message by content (robust to deletions),
+            // not by position — the first message isn't necessarily the board.
+            const isBoard = m.role === 'user' && m.content.indexOf('-- BOARD STATE ===') !== -1;
+            let bubble;
+            if (isBoard) {
+                bubble = appendBubble('Du', '📋 [Boardstate gesendet]', 'user board-chip');
+            } else if (m.role === 'user') {
+                bubble = appendBubble('Du', m.content, 'user');
+            } else {
+                bubble = appendBubble(partnerName, m.content, 'assistant');
+            }
+            addDeleteButton(bubble, convId, i);
+        });
+    }
+
+    // Add a hover "×" to a chat bubble that deletes that message from the conversation.
+    function addDeleteButton(bubbleEl, convId, msgIndex) {
+        const del = document.createElement('button');
+        del.className = 'msg-delete';
+        del.textContent = '×';
+        del.title = 'Diese Nachricht löschen';
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteMessage(convId, msgIndex);
+        });
+        bubbleEl.appendChild(del);
+    }
+
+    function deleteMessage(convId, msgIndex) {
+        fetch('/api/llm/conversation/delete_message', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation_id: convId, message_index: msgIndex })
+        })
+        .then((res) => res.json().catch(() => ({ success: false })))
+        .then((data) => {
+            if (data && data.success && data.conversation_removed && activeConversationId === convId) {
+                activeConversationId = null;
+                localStorage.removeItem('mtg-active-conv');
+            }
+            renderChatUI();  // broadcast also refreshes, but re-render immediately
+        })
+        .catch(() => { renderChatUI(); });
+    }
+
+    function renderChatUI() {
+        renderConversationTabs();
+        renderPartnerButtons();
+        renderConversationMessages();
+    }
+
+    function setInputsBusy(busy) {
+        chatSendBtn.disabled = busy;
+        chatInputEl.disabled = busy;
+        if (llmAskBtn) llmAskBtn.disabled = busy || activePlayerIndex() < 1;
+    }
+
+    // Core: send a message into the active/draft conversation (or a forced-new one)
+    function sendToConversation(userText, forceNewPartner) {
+        if (llmBusy) return;
+        userText = (userText || '').trim();
+
+        let convId = activeConversationId;
+        let partnerIdx;
+        if (forceNewPartner != null) { convId = null; partnerIdx = forceNewPartner; }
+        else { partnerIdx = targetPartnerIndex(); }
+
+        if (convId == null && (partnerIdx == null || partnerIdx < 1)) {
+            appendBubble('System', 'Kein Bot als Gesprächspartner gewählt.', 'system');
+            return;
+        }
+        const existing = convId ? findConv(convId) : null;
+        const isFirst = !existing || existing.messages.length === 0;
+        if (!isFirst && !userText) return;  // follow-up needs text
+
+        llmBusy = true; setInputsBusy(true);
+        const model = llmModelEl.value;
+        const partnerName = playerName(partnerIdx != null ? partnerIdx : (existing ? existing.partner_index : 0));
+        if (userText) appendBubble('Du', userText, 'user');
+        else if (isFirst) appendBubble('Du', '📋 [Boardstate gesendet]', 'user board-chip');
+        appendBubble(partnerName, '… denkt nach (' + model + ')', 'system');
+        chatInputEl.value = '';
+
+        const hideHand = localStorage.getItem('hideOpponentHand') !== 'false';
+        fetch('/api/llm/conversation', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                conversation_id: convId,
+                partner_index: partnerIdx,
+                user_text: userText,
+                model: model,
+                reasoning: llmReasoningEl.value,
+                oracle_mode: oracleModeEl.value,
+                recent_actions_count: recentActionsCount,
+                number_hand: hideHand,
+                notes: notesTextEl.value,
+                clutter: clutterTextEl.value,
+                hand_note: handNoteTextEl.value
+            })
+        })
+        .then((res) => res.json().catch(() => ({ success: false, error: 'Bad response' })))
+        .then((data) => {
+            if (data && data.success) {
+                activeConversationId = data.conversation_id;
+                draftPartnerIndex = null;
+                localStorage.setItem('mtg-active-conv', data.conversation_id);
+            }
+            renderChatUI();  // re-sync from the broadcast state
+            if (!data || !data.success) {
+                if (userText) chatInputEl.value = userText;  // restore for an easy retry
+                appendBubble('System', 'LLM-Fehler: ' + ((data && data.error) || 'Unbekannt'), 'system');
+            }
+        })
+        .catch((err) => {
+            if (userText) chatInputEl.value = userText;
+            renderChatUI();
+            appendBubble('System', 'LLM-Anfrage fehlgeschlagen: ' + err, 'system');
+        })
+        .finally(() => { llmBusy = false; setInputsBusy(false); refreshLlmLimit(); });
+    }
+
+    // Send box = follow-up / first message into the current conversation
+    function sendChatMessage() {
+        const msg = chatInputEl.value.trim();
+        if (!msg) return;
+        sendToConversation(msg, null);
+    }
+
+    chatSendBtn.addEventListener('click', sendChatMessage);
+    chatInputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendChatMessage(); }
+    });
 
     // ================================================================
     // Phase Tracker
@@ -250,6 +431,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         turnInfoEl.textContent = 'Turn ' + turnNum + ' \u2014 ' + activeName + '\'s turn';
+
+        // Green button: "<Bot>s Zug" — disabled on the human's (player 0) turn.
+        const askBtn = document.getElementById('llm-ask-btn');
+        if (askBtn && !llmBusy) {
+            if (activeIdx >= 1) {
+                askBtn.disabled = false;
+                askBtn.textContent = activeName + 's Zug';
+            } else {
+                askBtn.disabled = true;
+                askBtn.textContent = 'Du bist dran';
+            }
+        }
     }
 
     // ================================================================
@@ -267,7 +460,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (idx > 0) {
                 html += '<span class="life-separator">|</span>';
             }
-            html += '<div class="life-counter">';
+            html += '<div class="life-counter' + (player.eliminated ? ' eliminated' : '') + '">';
+            html += '<label class="elim-toggle" title="Hat das Spiel verloren — aus Snapshot &amp; Zugreihenfolge entfernen (Board bleibt)">';
+            html += '<input type="checkbox" class="elim-cb" data-player="' + idx + '"' + (player.eliminated ? ' checked' : '') + '>✝</label>';
             html += '<span class="life-player-name">' + MTGUtils.escapeHtml(player.name || 'Player ' + (idx + 1)) + '</span>';
             html += '<button class="life-btn" data-player="' + idx + '" data-delta="-1">-</button>';
             html += '<span class="life-value" id="life-value-' + idx + '">' + (player.life || 0) + '</span>';
@@ -286,6 +481,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     action: 'change_life',
                     player_index: playerIndex,
                     delta: delta
+                });
+            });
+        });
+
+        // Eliminate / revive toggle (reversible — board stays in the tracker)
+        lifeCountersEl.querySelectorAll('.elim-cb').forEach((cb) => {
+            cb.addEventListener('change', () => {
+                MTGSocket.send({
+                    action: 'set_eliminated',
+                    player_index: parseInt(cb.getAttribute('data-player'), 10),
+                    eliminated: cb.checked
                 });
             });
         });
@@ -328,16 +534,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Copy Boardstate
     // ================================================================
 
-    function copySnapshot() {
+    // Assemble the full prompt: current snapshot + persistent instructions +
+    // hand-note (when hands are hidden) + additional notes. Shared by the
+    // "Copy Boardstate" button and the LLM "Zug" button.
+    function buildPromptText() {
         let text = snapshotTextEl.value || '';
 
-        // Append reduce-clutter instructions (persistent)
         const clutter = clutterTextEl.value.trim();
         if (clutter) {
             text += '\n\n=== INSTRUCTIONS ===\n' + clutter;
         }
 
-        // Append hand-note when opponent hand is hidden
         const hideHand = localStorage.getItem('hideOpponentHand') !== 'false';
         if (hideHand) {
             const handNote = handNoteTextEl.value.trim();
@@ -346,12 +553,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Append additional notes if any
         const notes = notesTextEl.value.trim();
         if (notes) {
             text += '\n\n=== ADDITIONAL NOTES ===\n' + notes;
         }
 
+        return text;
+    }
+
+    function copySnapshot() {
+        const text = buildPromptText();
         navigator.clipboard.writeText(text).then(() => {
             showCopyToast();
         }).catch((err) => {
@@ -363,7 +574,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('copy-snapshot').addEventListener('click', copySnapshot);
-    document.getElementById('copy-snapshot-top').addEventListener('click', copySnapshot);
 
     function showCopyToast() {
         copyToastEl.classList.add('visible');
@@ -394,6 +604,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Which opponent is currently shown on the board's top slot (shared via
+    // localStorage by board.js). null → backend falls back to the active player.
+    function viewedOpponentIndex() {
+        const v = parseInt(localStorage.getItem('mtg-top-opponent'), 10);
+        return isNaN(v) ? null : v;
+    }
+
     const copyBotHandBtn = document.getElementById('copy-bot-hand');
     let botHandBtnClicked = false;
     copyBotHandBtn.addEventListener('click', () => {
@@ -403,7 +620,8 @@ document.addEventListener('DOMContentLoaded', () => {
         MTGSocket.send({
             action: 'get_bot_hand',
             oracle_mode: oracleModeEl.value,
-            number_hand: localStorage.getItem('hideOpponentHand') !== 'false'
+            number_hand: localStorage.getItem('hideOpponentHand') !== 'false',
+            player_index: viewedOpponentIndex()
         });
     });
 
@@ -435,38 +653,76 @@ document.addEventListener('DOMContentLoaded', () => {
         copyMulliganBtn.classList.remove('btn-blink');
         MTGSocket.send({
             action: 'get_mulligan_prompt',
-            oracle_mode: oracleModeEl.value
+            oracle_mode: oracleModeEl.value,
+            player_index: viewedOpponentIndex()
         });
     });
 
     // ================================================================
-    // Export
+    // LLM: send boardstate to OpenRouter and show the reply in chat
     // ================================================================
 
-    document.getElementById('export-btn').addEventListener('click', () => {
-        if (!currentState) {
-            addChatMessage('System', 'No game state to export.', 'system');
-            return;
-        }
+    const llmModelEl = document.getElementById('llm-model');
+    const llmReasoningEl = document.getElementById('llm-reasoning');
+    const llmAskBtn = document.getElementById('llm-ask-btn');
+    var DEFAULT_LLM_MODEL = 'google/gemini-3.5-flash';
+    llmModelEl.value = localStorage.getItem('mtg-llm-model') || DEFAULT_LLM_MODEL;
+    if (!llmModelEl.value) llmModelEl.value = DEFAULT_LLM_MODEL;  // guard if stored id no longer in list
 
-        const exportData = {
-            state: currentState,
-            chatMessages: chatMessages,
-            notes: notesTextEl.value,
-            exportedAt: new Date().toISOString()
-        };
+    // Reasoning effort is remembered PER MODEL.
+    function loadReasoningForModel() {
+        llmReasoningEl.value = localStorage.getItem('mtg-reasoning-' + llmModelEl.value) || 'auto';
+    }
+    loadReasoningForModel();
 
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
+    llmModelEl.addEventListener('change', () => {
+        localStorage.setItem('mtg-llm-model', llmModelEl.value);
+        loadReasoningForModel();  // each model keeps its own setting
+    });
+    llmReasoningEl.addEventListener('change', () => {
+        localStorage.setItem('mtg-reasoning-' + llmModelEl.value, llmReasoningEl.value);
+    });
 
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'mtg-game-export-' + Date.now() + '.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        addChatMessage('System', 'Game data exported.', 'system');
+    // ---- OpenRouter limit tracker (progress bar, auto-refreshed after each turn) ----
+    const llmLimitFill = document.getElementById('llm-limit-fill');
+    const llmLimitText = document.getElementById('llm-limit-text');
+
+    function refreshLlmLimit() {
+        fetch('/api/llm/limit')
+            .then((res) => res.json().catch(() => ({ success: false })))
+            .then((d) => {
+                if (!d || !d.success) {
+                    llmLimitText.textContent = 'Limit: n/v';
+                    return;
+                }
+                const resetLabel = d.limit_reset === 'daily' ? 'heute' : (d.limit_reset || '');
+                const limit = (typeof d.limit === 'number') ? d.limit : null;
+                const remaining = (typeof d.limit_remaining === 'number') ? d.limit_remaining : null;
+
+                if (limit === null) {
+                    // No cap — show daily usage only, full green bar
+                    llmLimitFill.style.width = '100%';
+                    llmLimitFill.className = 'llm-limit-fill';
+                    const used = (typeof d.usage_daily === 'number') ? d.usage_daily : 0;
+                    llmLimitText.textContent = 'Verbraucht ' + resetLabel + ': $' + used.toFixed(2) + ' (kein Limit)';
+                    return;
+                }
+
+                const frac = limit > 0 ? Math.max(0, Math.min(1, (remaining || 0) / limit)) : 0;
+                llmLimitFill.style.width = (frac * 100).toFixed(1) + '%';
+                llmLimitFill.className = 'llm-limit-fill' + (frac <= 0.15 ? ' crit' : (frac <= 0.4 ? ' warn' : ''));
+                llmLimitText.textContent = 'Limit ' + resetLabel + ': $' + (remaining || 0).toFixed(2) + ' / $' + limit.toFixed(2);
+            })
+            .catch(() => { llmLimitText.textContent = 'Limit: n/v'; });
+    }
+
+    refreshLlmLimit();  // on load
+
+    // Green button: start a NEW conversation with the active bot and send the board.
+    llmAskBtn.addEventListener('click', () => {
+        const active = activePlayerIndex();
+        if (active < 1) return;  // human's turn — no bot to ask
+        sendToConversation('', active);
     });
 
     // ================================================================
@@ -475,7 +731,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('export-html-btn').addEventListener('click', () => {
         if (!currentState) {
-            addChatMessage('System', 'No game state to export.', 'system');
+            appendBubble('System', 'No game state to export.', 'system');
             return;
         }
 
@@ -490,7 +746,7 @@ document.addEventListener('DOMContentLoaded', () => {
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        addChatMessage('System', 'Board exported as interactive HTML.', 'system');
+        appendBubble('System', 'Board exported as interactive HTML.', 'system');
     });
 
     // ================================================================
@@ -509,6 +765,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (confirm('Start a new game? Current game state will be lost if not exported.')) {
             window.location.href = '/setup';
         }
+    });
+
+    // ================================================================
+    // Quit App (clean server shutdown)
+    // ================================================================
+
+    document.getElementById('quit-app-btn').addEventListener('click', () => {
+        if (!confirm('App komplett beenden? Der Server wird heruntergefahren. Stelle sicher, dass dein Spiel gespeichert/exportiert ist.')) {
+            return;
+        }
+        const overlay = document.getElementById('shutdown-overlay');
+        const overlayText = document.getElementById('shutdown-overlay-text');
+        overlay.style.display = 'flex';
+        fetch('/api/app/shutdown', { method: 'POST' })
+            .then((res) => res.json().catch(() => ({})))
+            .then((data) => {
+                if (data && data.success === false) {
+                    overlayText.textContent = 'Beenden fehlgeschlagen: ' + (data.error || 'Unbekannt');
+                } else {
+                    overlayText.textContent = 'Server beendet — du kannst dieses Fenster jetzt schließen.';
+                }
+            })
+            .catch(() => {
+                // Connection dropped because the server is shutting down — expected.
+                overlayText.textContent = 'Server beendet — du kannst dieses Fenster jetzt schließen.';
+            });
     });
 
     // ================================================================

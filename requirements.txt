@@ -1,10 +1,15 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-websockets==14.1
-jinja2==3.1.5
-pydantic==2.10.4
-aiohttp==3.11.11
-aiofiles==24.1.0
-python-multipart==0.0.20
-pystray==0.19.5
-pillow==11.1.0
+# Core (verified on Python 3.11–3.14, Windows + Linux)
+fastapi>=0.115.6
+uvicorn[standard]>=0.34.0
+websockets>=14.1
+jinja2>=3.1.5
+pydantic>=2.10.4
+aiohttp>=3.11.11
+aiofiles>=24.1.0
+python-multipart>=0.0.20
+
+# Optional: system-tray launcher (start.py). The app also runs fine without
+# these via terminal mode (Ctrl+C to quit). On Linux a tray backend is needed
+# for an actual icon — e.g. on Debian/Ubuntu: apt install gir1.2-appindicator3-0.1
+pystray>=0.19.5
+pillow>=11.1.0

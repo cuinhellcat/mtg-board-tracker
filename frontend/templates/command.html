@@ -18,9 +18,30 @@
         </div>
     </header>
 
-    <!-- Top Copy Button -->
-    <div class="cmd-button-row-primary" style="padding: 4px 12px 0;">
-        <button class="btn btn-copy-main" id="copy-snapshot-top" title="Copy boardstate snapshot to clipboard">Copy Boardstate</button>
+    <!-- Top: model selector + ask-LLM (the main action) -->
+    <div class="cmd-button-row-primary" style="padding: 4px 12px 0; display:flex; gap:8px; align-items:center;">
+        <select id="llm-model" title="OpenRouter-Modell" style="flex:0 0 auto;">
+            <option value="openai/gpt-5.5">GPT-5.5</option>
+            <option value="google/gemini-3.5-flash">Gemini 3.5 Flash</option>
+            <option value="google/gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+            <option value="anthropic/claude-opus-4.8">Opus 4.8</option>
+            <option value="deepseek/deepseek-v4-pro">DeepSeek V4 Pro</option>
+            <option value="x-ai/grok-4.3">Grok 4.3</option>
+        </select>
+        <select id="llm-reasoning" title="Reasoning-Aufwand (pro Modell gemerkt)" style="flex:0 0 auto;">
+            <option value="auto">🧠 Auto</option>
+            <option value="minimal">Minimal</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+        </select>
+        <button class="btn btn-copy-main" id="llm-ask-btn" title="Boardstate an das gewählte Modell senden" style="flex:1;">Zug</button>
+    </div>
+
+    <!-- OpenRouter limit tracker -->
+    <div class="llm-limit" id="llm-limit" title="OpenRouter-Limit (aktualisiert nach jedem Zug)" style="padding: 2px 12px 4px;">
+        <div class="llm-limit-bar"><div class="llm-limit-fill" id="llm-limit-fill"></div></div>
+        <span class="llm-limit-text" id="llm-limit-text">Limit: …</span>
     </div>
 
     <!-- 2. Phase Tracker + Life Counters (compact bar) -->
@@ -36,17 +57,21 @@
         </div>
     </section>
 
-    <!-- 3. Chat / Conversation Area -->
+    <!-- 3. Conversation tabs (resume old conversations) -->
+    <div class="conversation-tabs" id="conversation-tabs"></div>
+
+    <!-- 4. Chat / Conversation Area -->
     <section class="chat-area">
         <div class="chat-messages" id="chat-messages">
-            <div class="chat-empty" id="chat-empty">No messages yet. Start the conversation below.</div>
+            <div class="chat-empty" id="chat-empty">Noch keine Nachrichten. Wähle einen Partner und schreib unten.</div>
         </div>
     </section>
 
-    <!-- 4. Chat Input -->
+    <!-- 5. Partner selector + Chat Input -->
+    <div class="partner-buttons" id="partner-buttons"></div>
     <div class="chat-input-bar">
-        <textarea id="chat-input" class="chat-input-field" placeholder="Type a message to the AI..." rows="2"></textarea>
-        <button class="btn btn-primary chat-send-btn" id="chat-send" title="Send message">Send</button>
+        <textarea id="chat-input" class="chat-input-field" placeholder="Nachricht an den gewählten Bot…" rows="2"></textarea>
+        <button class="btn btn-primary chat-send-btn" id="chat-send" title="An den gewählten Bot senden">Send</button>
     </div>
 
     <!-- 5. Boardstate Snapshot (collapsible) -->
@@ -116,18 +141,24 @@
 
     <!-- 8. Button Bar -->
     <footer class="cmd-button-bar">
-        <div class="cmd-button-row-primary">
-            <button class="btn btn-copy-main" id="copy-snapshot" title="Copy boardstate snapshot to clipboard">Copy Boardstate</button>
-        </div>
         <div class="cmd-button-row-secondary">
             <button class="btn btn-small btn-blink" id="copy-mulligan-prompt" title="Copy mulligan prompt with commander info">Copy Bot's Hand</button>
             <button class="btn btn-small btn-blink" id="copy-bot-hand" title="Copy bot's hand cards for mulligan decisions">Copy Bot's Hand (Mulligan)</button>
-            <button class="btn" id="export-btn" title="Export game data">Export</button>
+            <button class="btn" id="copy-snapshot" title="Boardstate in die Zwischenablage kopieren">Copy Boardstate</button>
             <button class="btn" id="export-html-btn" title="Export interactive HTML board for sharing">Export HTML</button>
             <button class="btn" id="undo-btn" title="Undo last action">Undo</button>
             <button class="btn btn-danger" id="new-game-btn" title="Start a new game">New Game</button>
+            <button class="btn btn-danger" id="quit-app-btn" title="Server beenden (App komplett schließen)">⏻ App beenden</button>
         </div>
     </footer>
+
+    <!-- Shutdown overlay -->
+    <div id="shutdown-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9999; align-items:center; justify-content:center; text-align:center; color:#eee; font-size:18px; padding:24px;">
+        <div>
+            <div style="font-size:42px; margin-bottom:12px;">⏻</div>
+            <div id="shutdown-overlay-text">Server wird beendet …</div>
+        </div>
+    </div>
 
     <!-- Copy feedback toast -->
     <div class="copy-toast" id="copy-toast">Copied!</div>

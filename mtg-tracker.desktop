@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=MTG Board Tracker
+Comment=Magic: The Gathering board state tracker (vs LLM)
+# Launched via `bash` because OneDrive/rclone mounts are noexec (the script
+# can't be exec'd directly, but bash reading it works). Adjust the path below
+# to wherever this project lives, then copy this file to
+# ~/.local/share/applications/ and run: update-desktop-database ~/.local/share/applications
+Exec=bash "/var/home/hellcat/OneDrive/Documents/Images/KI Projekte/MtG vs KI Linux/run.sh"
+Path=/var/home/hellcat/OneDrive/Documents/Images/KI Projekte/MtG vs KI Linux
+Icon=/var/home/hellcat/OneDrive/Documents/Images/KI Projekte/MtG vs KI Linux/mtg_tray_icon.png
+Terminal=false
+Categories=Game;
+StartupNotify=true

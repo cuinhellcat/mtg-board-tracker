@@ -122,6 +122,11 @@ button { cursor: pointer; font-family: inherit; font-size: inherit; }
     display: flex; align-items: center; gap: 12px; flex-shrink: 0; height: 28px;
 }
 .player-top .player-label { border-bottom: 1px solid var(--p1-border); background: var(--p1-label-bg); }
+.top-switch { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.top-switch-btn { padding: 2px 8px; font-size: 11px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-card); color: var(--text-secondary); cursor: pointer; }
+.top-switch-btn:hover { background: var(--bg-card-hover); border-color: var(--p1-accent); color: var(--text-primary); }
+.top-switch-btn.viewing { border-color: var(--p1-accent); color: var(--text-primary); background: var(--bg-card-hover); font-weight: 700; }
+.top-switch-btn.active-turn { box-shadow: 0 0 0 2px rgba(80, 200, 120, 0.55); }
 .player-bottom .player-label { border-top: 1px solid var(--p0-border); border-bottom: none; background: var(--p0-label-bg); }
 .player-top .player-zones { background: var(--p1-accent-subtle); }
 .player-bottom .player-zones { background: var(--p0-accent-subtle); }
@@ -254,7 +259,20 @@ button { cursor: pointer; font-family: inherit; font-size: inherit; }
 /* Face down */
 .card.face-down .card-header, .card.face-down .card-type, .card.face-down .card-pt,
 .card.face-down .card-loyalty, .card.face-down .card-custom-pt,
-.card.face-down .card-badge-token, .card.face-down .inventory-toggle { display: none; }
+.card.face-down .card-badge-token { display: none; }
+.card-fd-label, .card-fd-pt { display: none; }
+.card.face-down .card-fd-label {
+    display: block; text-align: center; font-size: var(--card-font); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px; padding: 2px 0; color: rgba(255,255,255,0.6);
+}
+.card.face-down[data-fd-type="morph"] .card-fd-label { color: rgba(255,180,50,0.95); }
+.card.face-down[data-fd-type="manifest"] .card-fd-label { color: rgba(120,175,255,0.95); }
+.card.face-down[data-fd-type="cloaked"] .card-fd-label { color: rgba(205,205,255,0.95); }
+.card.face-down .card-fd-pt {
+    display: block; font-size: var(--card-font); font-weight: 700; color: #fff;
+    background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.35); border-radius: 3px;
+    padding: 0 3px; text-align: right; margin-top: auto; margin-left: auto; width: fit-content;
+}
 .card.face-down[data-owner="0"] {
     background: repeating-linear-gradient(45deg, #0d2e30, #0d2e30 4px, #082022 4px, #082022 8px) !important;
     border-color: #1a7a80 !important;
@@ -267,15 +285,6 @@ button { cursor: pointer; font-family: inherit; font-size: inherit; }
     background: repeating-linear-gradient(45deg, #2a2a2e, #2a2a2e 4px, #1e1e22 4px, #1e1e22 8px) !important;
     border-color: #666 !important;
 }
-.card.face-down::after {
-    content: 'Face Down'; display: flex; align-items: center; justify-content: center;
-    height: 100%; font-size: 8px; font-weight: 600; color: rgba(255, 255, 255, 0.35);
-    text-transform: uppercase; letter-spacing: 1px;
-}
-.card.face-down[data-fd-type="morph"]::after { content: 'Morph\\A 2/2'; white-space: pre; color: rgba(255, 180, 50, 0.7); }
-.card.face-down[data-fd-type="manifest"]::after { content: 'Manifest\\A 2/2'; white-space: pre; color: rgba(100, 160, 255, 0.7); }
-.card.face-down[data-fd-type="cloaked"]::after { content: 'Cloaked\\A 2/2'; white-space: pre; color: rgba(200, 200, 255, 0.7); }
-
 /* Tapped */
 .card.tapped { transform: rotate(-90deg); opacity: 0.75; margin: 10px 15px; }
 /* Attacking */
@@ -531,42 +540,43 @@ var HTML_STRUCTURE = `
         <span id="export-date"></span>
     </div>
 
-    <!-- OPPONENT (Player 1) - TOP -->
+    <!-- OPPONENT (switchable) - TOP -->
     <div id="player-top" class="player-half player-top" data-player-index="1">
         <div class="player-label">
             <span class="player-name-display" id="player-top-name">Opponent</span>
+            <span class="top-switch" id="top-switch-buttons"></span>
         </div>
         <div class="player-zones">
             <div class="side-column side-left">
-                <div class="zone zone-library" id="zone-library-1">
+                <div class="zone zone-library" id="zone-library-top">
                     <div class="zone-label">Library</div>
                     <div class="library-icon">
                         <div class="library-card-back"></div>
-                        <span class="library-count" id="lib-count-1">0</span>
+                        <span class="library-count" id="lib-count-top">0</span>
                     </div>
                 </div>
-                <div class="zone zone-command" id="zone-command-1">
+                <div class="zone zone-command" id="zone-command-top">
                     <div class="zone-label">Command</div>
                     <div class="zone-cards"></div>
                 </div>
             </div>
             <div class="main-column">
-                <div class="zone zone-hand" id="zone-hand-1">
-                    <div class="zone-label">Hand (<span id="hand-count-1">0</span>)</div>
+                <div class="zone zone-hand" id="zone-hand-top">
+                    <div class="zone-label">Hand (<span id="hand-count-top">0</span>)</div>
                     <div class="zone-cards"></div>
                 </div>
-                <div class="zone zone-battlefield" id="zone-battlefield-1">
+                <div class="zone zone-battlefield" id="zone-battlefield-top">
                     <div class="zone-label">Battlefield</div>
                     <div class="zone-cards"></div>
                 </div>
             </div>
             <div class="side-column side-right">
-                <div class="zone zone-graveyard" id="zone-graveyard-1">
-                    <div class="zone-label">GY (<span id="gy-count-1">0</span>)</div>
+                <div class="zone zone-graveyard" id="zone-graveyard-top">
+                    <div class="zone-label">GY (<span id="gy-count-top">0</span>)</div>
                     <div class="zone-cards"></div>
                 </div>
-                <div class="zone zone-exile" id="zone-exile-1">
-                    <div class="zone-label">Exile (<span id="ex-count-1">0</span>)</div>
+                <div class="zone zone-exile" id="zone-exile-top">
+                    <div class="zone-label">Exile (<span id="ex-count-top">0</span>)</div>
                     <div class="zone-cards"></div>
                 </div>
             </div>
@@ -617,13 +627,13 @@ var HTML_STRUCTURE = `
             </div>
         </div>
         <div class="middle-section life-section">
-            <div class="life-counter" id="life-counter-1">
-                <span class="life-player-name" id="life-name-1">P2</span>
+            <div class="life-counter" id="life-counter-top">
+                <span class="life-player-name" id="life-name-top">P2</span>
                 <button class="life-btn life-minus" data-player="1" data-delta="-1">&#8722;</button>
-                <span class="life-total" id="life-total-1">20</span>
+                <span class="life-total" id="life-total-top" data-player="1">20</span>
                 <button class="life-btn life-plus" data-player="1" data-delta="1">+</button>
-                <div class="commander-damage-row" id="cmdr-dmg-1"></div>
-                <div class="extra-counters-row" id="extra-counters-1"></div>
+                <div class="commander-damage-row" id="cmdr-dmg-top"></div>
+                <div class="extra-counters-row" id="extra-counters-top"></div>
             </div>
         </div>
     </div>
@@ -796,8 +806,23 @@ var VIEWER_JS = `
 
         // Custom P/T
         var customPtHtml = '';
-        if (card.custom_power !== null && card.custom_power !== undefined) {
+        var _hasCustomPt = card.custom_power !== null && card.custom_power !== undefined;
+        if (_hasCustomPt) {
             customPtHtml = '<div class="card-custom-pt">' + card.custom_power + '/' + card.custom_toughness + '</div>';
+        }
+
+        // Face-down label (top) + P/T badge (bottom)
+        var faceDownLabelHtml = '';
+        var faceDownPtHtml = '';
+        if (card.face_down) {
+            var fdLabels = { morph: 'Morph', manifest: 'Manifest', cloaked: 'Cloaked' };
+            var fdLabel = fdLabels[card.face_down_type] || 'Face Down';
+            faceDownLabelHtml = '<div class="card-fd-label">' + fdLabel + '</div>';
+            if (fdLabels[card.face_down_type]) {
+                var fdP = _hasCustomPt ? card.custom_power : 2;
+                var fdT = _hasCustomPt ? card.custom_toughness : 2;
+                faceDownPtHtml = '<div class="card-fd-pt">' + fdP + '/' + fdT + '</div>';
+            }
         }
 
         // Oracle / note indicators
@@ -824,13 +849,13 @@ var VIEWER_JS = `
             ? '<div class="inventory-toggle">\\u25b6 ' + (attachedData.length + linkedExileData.length) + '</div>'
             : '';
 
-        el.innerHTML = tokenBadge + transformBadge + quantityBadge +
+        el.innerHTML = tokenBadge + transformBadge + quantityBadge + faceDownLabelHtml +
             '<div class="card-header">' +
                 '<div class="card-name">' + escapeHtml(displayName) + '</div>' +
                 '<div class="card-mana">' + renderManaCost(displayMana) + '</div>' +
             '</div>' +
             '<div class="card-type">' + escapeHtml(displayType) + '</div>' +
-            ptHtml + customPtHtml + counterHtml + oracleIndicator + noteIndicator + inventoryToggle;
+            ptHtml + customPtHtml + faceDownPtHtml + counterHtml + oracleIndicator + noteIndicator + inventoryToggle;
 
         // Click: tap/untap on battlefield
         el.addEventListener('click', function(e) {
@@ -985,29 +1010,31 @@ var VIEWER_JS = `
         cards.forEach(function(card) { container.appendChild(createCardElement(card)); });
     }
 
-    function renderPlayerZones(playerIndex) {
-        renderBattlefieldZone('zone-battlefield-' + playerIndex, getCardsInZone('battlefield', playerIndex));
-        renderZoneCards('zone-hand-' + playerIndex, getCardsInZone('hand', playerIndex));
-        renderZoneCards('zone-command-' + playerIndex, getCardsInZone('command_zone', playerIndex));
+    function renderPlayerZones(playerIndex, slot) {
+        if (slot === undefined) slot = playerIndex;
+        renderBattlefieldZone('zone-battlefield-' + slot, getCardsInZone('battlefield', playerIndex));
+        renderZoneCards('zone-hand-' + slot, getCardsInZone('hand', playerIndex));
+        renderZoneCards('zone-command-' + slot, getCardsInZone('command_zone', playerIndex));
 
         var libCards = getCardsInZone('library', playerIndex);
-        document.getElementById('lib-count-' + playerIndex).textContent = libCards.length;
+        document.getElementById('lib-count-' + slot).textContent = libCards.length;
 
         // Graveyard: show ALL cards (not just top)
         var gyCards = getCardsInZone('graveyard', playerIndex);
-        document.getElementById('gy-count-' + playerIndex).textContent = gyCards.length;
-        renderZoneCards('zone-graveyard-' + playerIndex, gyCards);
+        document.getElementById('gy-count-' + slot).textContent = gyCards.length;
+        renderZoneCards('zone-graveyard-' + slot, gyCards);
 
         // Exile: show ALL cards
         var exCards = getCardsInZone('exile', playerIndex);
-        document.getElementById('ex-count-' + playerIndex).textContent = exCards.length;
-        renderZoneCards('zone-exile-' + playerIndex, exCards);
+        document.getElementById('ex-count-' + slot).textContent = exCards.length;
+        renderZoneCards('zone-exile-' + slot, exCards);
 
-        document.getElementById('hand-count-' + playerIndex).textContent = getCardsInZone('hand', playerIndex).length;
+        document.getElementById('hand-count-' + slot).textContent = getCardsInZone('hand', playerIndex).length;
     }
 
-    function renderCommanderDamage(playerIndex) {
-        var row = document.getElementById('cmdr-dmg-' + playerIndex);
+    function renderCommanderDamage(playerIndex, slot) {
+        if (slot === undefined) slot = playerIndex;
+        var row = document.getElementById('cmdr-dmg-' + slot);
         if (!row) return;
         var player = state.players[playerIndex];
         if (!player) return;
@@ -1022,8 +1049,9 @@ var VIEWER_JS = `
         }
     }
 
-    function renderExtraCounters(playerIndex) {
-        var row = document.getElementById('extra-counters-' + playerIndex);
+    function renderExtraCounters(playerIndex, slot) {
+        if (slot === undefined) slot = playerIndex;
+        var row = document.getElementById('extra-counters-' + slot);
         if (!row) return;
         var player = state.players[playerIndex];
         if (!player) return;
@@ -1073,7 +1101,7 @@ var VIEWER_JS = `
                     var n = this.dataset.name;
                     state.players[pi].extra_counters[n] = Math.max(0, (state.players[pi].extra_counters[n] || 0) + delta);
                 }
-                renderExtraCounters(pi);
+                renderBoard();
             });
         });
     }
@@ -1085,34 +1113,72 @@ var VIEWER_JS = `
         }
     }
 
+    // ---- Top opponent slot state ----
+    var topOpponentIndex = 1;
+
     // ---- Life Buttons ----
     document.querySelectorAll('.life-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             var pi = parseInt(this.dataset.player, 10);
             var delta = parseInt(this.dataset.delta, 10);
             state.players[pi].life += delta;
-            document.getElementById('life-total-' + pi).textContent = state.players[pi].life;
+            renderBoard();
         });
     });
+
+    function renderTopSwitchButtons() {
+        var container = document.getElementById('top-switch-buttons');
+        if (!container) return;
+        container.innerHTML = '';
+        var numPlayers = state.players.length;
+        for (var i = 1; i < numPlayers; i++) {
+            (function(idx) {
+                var p = state.players[idx];
+                var btn = document.createElement('button');
+                btn.className = 'top-switch-btn';
+                if (idx === topOpponentIndex) btn.classList.add('viewing');
+                if (idx === state.active_player_index) btn.classList.add('active-turn');
+                btn.textContent = p.name + ' (' + p.life + ')';
+                btn.addEventListener('click', function() { topOpponentIndex = idx; renderBoard(); });
+                container.appendChild(btn);
+            })(i);
+        }
+    }
 
     // ---- Full Render ----
     function renderBoard() {
         var numPlayers = state.players ? state.players.length : 0;
 
+        if (topOpponentIndex < 1 || topOpponentIndex >= numPlayers) {
+            topOpponentIndex = numPlayers > 1 ? 1 : 0;
+        }
+
+        // Bottom slot: human (player 0)
         if (numPlayers > 0) {
             document.getElementById('player-bottom-name').textContent = state.players[0].name + ' (You)';
             document.getElementById('life-name-0').textContent = state.players[0].name;
-        }
-        if (numPlayers > 1) {
-            document.getElementById('player-top-name').textContent = state.players[1].name + ' (Opponent)';
-            document.getElementById('life-name-1').textContent = state.players[1].name;
+            renderPlayerZones(0, 0);
+            document.getElementById('life-total-0').textContent = state.players[0].life;
+            renderCommanderDamage(0, 0);
+            renderExtraCounters(0, 0);
         }
 
-        for (var pi = 0; pi < numPlayers && pi < 2; pi++) {
-            renderPlayerZones(pi);
-            document.getElementById('life-total-' + pi).textContent = state.players[pi].life;
-            renderCommanderDamage(pi);
-            renderExtraCounters(pi);
+        // Top slot: selected opponent
+        if (numPlayers > 1) {
+            var topP = state.players[topOpponentIndex];
+            var activeMark = (topOpponentIndex === state.active_player_index) ? ' \\u25B6 am Zug' : '';
+            document.getElementById('player-top-name').textContent = topP.name + ' (Opponent)' + activeMark;
+            document.getElementById('life-name-top').textContent = topP.name;
+            renderPlayerZones(topOpponentIndex, 'top');
+            document.getElementById('life-total-top').textContent = topP.life;
+            document.getElementById('life-total-top').setAttribute('data-player', String(topOpponentIndex));
+            renderCommanderDamage(topOpponentIndex, 'top');
+            renderExtraCounters(topOpponentIndex, 'top');
+            // Stamp live player index onto the top life buttons
+            document.querySelectorAll('#life-counter-top .life-btn').forEach(function(b) {
+                b.setAttribute('data-player', String(topOpponentIndex));
+            });
+            renderTopSwitchButtons();
         }
 
         document.getElementById('turn-display').textContent = 'Turn ' + state.turn;

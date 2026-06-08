@@ -1,13 +1,19 @@
 """
 FastAPI application: routes, WebSocket, and static file serving.
-Entry point for the MTG Duel Commander Board State Tracker backend.
+Entry point for the MTG Commander Board State Tracker backend.
 """
 
 import asyncio
 import json
+import os
+import time
 import traceback
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Set
+
+import aiohttp
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -40,11 +46,38 @@ from backend.scryfall import (
     update_cache,
 )
 from backend.decklist import parse_decklist
-from backend.snapshot import generate_bot_hand, generate_mulligan_prompt, generate_snapshot
+from backend.models import Conversation, ConversationMessage
+from backend.snapshot import build_board_prompt, generate_bot_hand, generate_mulligan_prompt, generate_snapshot
 from backend.printing_prefs import get_preference, set_preference
 from backend.deck_storage import list_decks, save_deck, load_deck, delete_deck
 
 BASE_DIR = Path(__file__).parent.parent
+
+
+def _load_dotenv():
+    """Load KEY=VALUE pairs from a local .env into os.environ (no dependency).
+
+    Existing environment variables win; blank lines and '#' comments are skipped.
+    Used for secrets like OPENROUTER_API_KEY that must stay out of git.
+    """
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
+_load_dotenv()
 
 app = FastAPI(title="MTG Board State Tracker", version="1.0.0")
 
@@ -87,7 +120,7 @@ async def broadcast_state():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Landing page: resume last game or start a new one."""
-    return templates.TemplateResponse("landing.html", {"request": request})
+    return templates.TemplateResponse(request, "landing.html")
 
 
 @app.get("/api/save-summary")
@@ -118,19 +151,19 @@ async def api_archive_load(request: Request):
 @app.get("/board", response_class=HTMLResponse)
 async def board_page(request: Request):
     """Render the board view."""
-    return templates.TemplateResponse("board.html", {"request": request})
+    return templates.TemplateResponse(request, "board.html")
 
 
 @app.get("/command", response_class=HTMLResponse)
 async def command_page(request: Request):
     """Render the command/control view."""
-    return templates.TemplateResponse("command.html", {"request": request})
+    return templates.TemplateResponse(request, "command.html")
 
 
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
     """Render the game setup view."""
-    return templates.TemplateResponse("setup.html", {"request": request})
+    return templates.TemplateResponse(request, "setup.html")
 
 
 # ------------------------------------------------------------------
@@ -228,9 +261,9 @@ async def api_new_game(request: Request):
 
     # Handle setup page format: parse decklists from text
     players_raw = body.get("players", body.get("players_data", []))
-    if len(players_raw) != 2:
+    if not (2 <= len(players_raw) <= 4):
         return JSONResponse(
-            {"success": False, "error": "Exactly 2 players required"},
+            {"success": False, "error": "Between 2 and 4 players required"},
             status_code=400,
         )
 
@@ -319,6 +352,8 @@ async def api_new_game(request: Request):
         "players_data": players_data,
         "starting_life": starting_life,
         "first_player_index": first_player_index,
+        "format": body.get("format", "Commander"),
+        "play_mode": body.get("play_mode", "competitive"),
     })
 
     if all_cards_for_images:
@@ -351,6 +386,262 @@ async def api_game_snapshot(notes: str = "", recent_actions_count: int = 1):
     action_log = [e.model_dump() for e in engine.state.action_log]
     snapshot = generate_snapshot(engine.state, action_log, notes=notes, recent_actions_count=recent_actions_count)
     return JSONResponse({"snapshot": snapshot})
+
+
+@app.post("/api/app/shutdown")
+async def api_app_shutdown(request: Request):
+    """Shut the whole app down gracefully (server + tray, if any).
+
+    Restricted to localhost: the server binds 0.0.0.0, so without this guard
+    anyone on the LAN could kill it. The actual shutdown is deferred briefly so
+    this HTTP response can flush before the server stops.
+    """
+    client_host = request.client.host if request.client else ""
+    if client_host not in ("127.0.0.1", "::1", "localhost"):
+        return JSONResponse(
+            {"success": False, "error": "Shutdown is only allowed from localhost."},
+            status_code=403,
+        )
+
+    # start.py registers app.state.request_shutdown (stops uvicorn + tray icon).
+    shutdown_cb = getattr(request.app.state, "request_shutdown", None)
+
+    async def _deferred_shutdown():
+        await asyncio.sleep(0.3)  # let the response flush first
+        if shutdown_cb is not None:
+            shutdown_cb()
+        else:
+            # Fallback (e.g. running under a different launcher): signal self.
+            import os
+            import signal
+            os.kill(os.getpid(), signal.SIGINT)
+
+    asyncio.create_task(_deferred_shutdown())
+    return JSONResponse({"success": True})
+
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+LLM_LOG_PATH = BASE_DIR / "llm.log"
+
+
+def _log_llm(message: str):
+    """Append a diagnostic line to llm.log (best-effort) and stdout.
+
+    For sharing with support when an LLM call misbehaves. Contains no API key.
+    """
+    line = f"{_now_iso()} {message}"
+    try:
+        with open(LLM_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    print(f"[llm] {message}", flush=True)
+
+
+async def _openrouter_chat(model: str, messages: list, reasoning_effort: str = ""):
+    """Call OpenRouter chat/completions. Returns (ok: bool, content_or_error: str).
+
+    reasoning_effort: "" / "auto" (provider default) or "minimal"/"low"/"medium"/"high".
+    The API key stays server-side (OPENROUTER_API_KEY from .env). Every call is
+    logged to llm.log (request, outcome, timing, errors) for diagnostics.
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        _log_llm(f"ABORT model={model} reason=no_api_key")
+        return False, "OPENROUTER_API_KEY not set (create a .env file)"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-Title": "MTG Board Tracker",
+    }
+    payload = {"model": model, "messages": messages}
+    effort = (reasoning_effort or "").strip().lower()
+    if effort in ("minimal", "low", "medium", "high"):
+        payload["reasoning"] = {"effort": effort}
+    prompt_chars = sum(len(m.get("content", "")) for m in messages)
+    _log_llm(f"REQUEST model={model} reasoning={effort or 'auto'} messages={len(messages)} prompt_chars={prompt_chars}")
+
+    start = time.monotonic()
+    try:
+        timeout = aiohttp.ClientTimeout(total=180)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+                status = resp.status
+                try:
+                    data = await resp.json()
+                except Exception:
+                    text = await resp.text()
+                    dur = time.monotonic() - start
+                    _log_llm(f"FAIL model={model} status={status} dur={dur:.1f}s reason=non_json body={text[:400]!r}")
+                    return False, f"OpenRouter HTTP {status}: {text[:300]}"
+                dur = time.monotonic() - start
+                if status != 200:
+                    err = data.get("error", {})
+                    msg = err.get("message") if isinstance(err, dict) else str(err)
+                    _log_llm(f"FAIL model={model} status={status} dur={dur:.1f}s error={msg!r} body={json.dumps(data)[:600]}")
+                    return False, (msg or f"OpenRouter HTTP {status}")
+                content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                if not content:
+                    _log_llm(f"FAIL model={model} status=200 dur={dur:.1f}s reason=empty_content body={json.dumps(data)[:600]}")
+                    return False, "Empty response from model"
+                _log_llm(f"OK model={model} status=200 dur={dur:.1f}s content_chars={len(content)}")
+                return True, content
+    except asyncio.TimeoutError:
+        dur = time.monotonic() - start
+        _log_llm(f"FAIL model={model} dur={dur:.1f}s reason=timeout (>180s)")
+        return False, "OpenRouter request timed out"
+    except Exception as e:
+        dur = time.monotonic() - start
+        _log_llm(f"FAIL model={model} dur={dur:.1f}s exc={type(e).__name__}: {e}")
+        return False, f"{type(e).__name__}: {e}"
+
+
+@app.post("/api/llm/conversation")
+async def api_llm_conversation(request: Request):
+    """Send a message into a per-bot conversation and return the model's reply.
+
+    Body: {conversation_id|null, partner_index, user_text, model, oracle_mode,
+    recent_actions_count, number_hand, notes, clutter, hand_note}.
+
+    The board snapshot (from the partner's perspective) is embedded only in the
+    FIRST user message; the full conversation is resent to OpenRouter each call.
+    Conversations live in the game state (persistent, broadcast to all clients).
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+
+    model = (body.get("model") or "").strip()
+    if not model:
+        return JSONResponse({"success": False, "error": "No model selected"}, status_code=400)
+
+    state = engine.state
+    conversation_id = body.get("conversation_id")
+    user_text = (body.get("user_text") or "").strip()
+
+    # Locate existing conversation, or create a new one.
+    conv = None
+    if conversation_id:
+        conv = next((c for c in state.conversations if c.id == conversation_id), None)
+    newly_created = False
+    if conv is None:
+        partner_index = body.get("partner_index")
+        if not isinstance(partner_index, int) or not (0 <= partner_index < len(state.players)):
+            return JSONResponse({"success": False, "error": "Invalid partner_index"}, status_code=400)
+        conv = Conversation(
+            id=str(uuid.uuid4()), partner_index=partner_index,
+            created_turn=state.turn, created_at=_now_iso(), model=model,
+        )
+        state.conversations.append(conv)
+        newly_created = True
+        if len(state.conversations) > 50:  # keep the save file sane
+            state.conversations = state.conversations[-50:]
+
+    # Build the user message: first turn carries the board (partner's POV).
+    if not conv.messages:
+        action_log = [e.model_dump() for e in state.action_log]
+        board = build_board_prompt(
+            state, action_log, conv.partner_index,
+            oracle_mode=body.get("oracle_mode", "off"),
+            recent_actions_count=body.get("recent_actions_count", 1),
+            number_hand=body.get("number_hand", True),
+            notes=body.get("notes", ""),
+            clutter=body.get("clutter", ""),
+            hand_note=body.get("hand_note", ""),
+        )
+        content = board + (("\n\n" + user_text) if user_text else "")
+    else:
+        if not user_text:
+            return JSONResponse({"success": False, "error": "Empty follow-up"}, status_code=400)
+        content = user_text
+
+    conv.messages.append(ConversationMessage(role="user", content=content, timestamp=_now_iso()))
+    conv.model = model
+    or_messages = [{"role": m.role, "content": m.content} for m in conv.messages]
+
+    ok, result = await _openrouter_chat(model, or_messages, reasoning_effort=body.get("reasoning", ""))
+    if not ok:
+        # Roll back the user turn; drop the conversation if it was just created.
+        conv.messages.pop()
+        if newly_created and not conv.messages and conv in state.conversations:
+            state.conversations.remove(conv)
+        return JSONResponse({"success": False, "error": f"[{model}] {result}"}, status_code=502)
+
+    conv.messages.append(ConversationMessage(role="assistant", content=result, timestamp=_now_iso()))
+    engine._auto_save()
+    await broadcast_state()
+    return JSONResponse({"success": True, "content": result, "conversation_id": conv.id})
+
+
+@app.post("/api/llm/conversation/delete_message")
+async def api_llm_delete_message(request: Request):
+    """Delete a single message (bubble) from a saved conversation by index.
+
+    If the conversation becomes empty, it is removed entirely. Persisted + broadcast.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+
+    conv_id = body.get("conversation_id")
+    idx = body.get("message_index")
+    conv = next((c for c in engine.state.conversations if c.id == conv_id), None)
+    if conv is None:
+        return JSONResponse({"success": False, "error": "Conversation not found"}, status_code=404)
+    if not isinstance(idx, int) or not (0 <= idx < len(conv.messages)):
+        return JSONResponse({"success": False, "error": "Invalid message_index"}, status_code=400)
+
+    conv.messages.pop(idx)
+    conversation_removed = False
+    if not conv.messages:  # empty → drop the conversation
+        engine.state.conversations = [c for c in engine.state.conversations if c.id != conv_id]
+        conversation_removed = True
+
+    engine._auto_save()
+    await broadcast_state()
+    return JSONResponse({"success": True, "conversation_removed": conversation_removed})
+
+
+@app.get("/api/llm/limit")
+async def api_llm_limit():
+    """Return the OpenRouter key's usage/limit (for the in-app limit tracker).
+
+    Proxies GET /api/v1/key server-side so the key never reaches the browser.
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return JSONResponse({"success": False, "error": "OPENROUTER_API_KEY not set"}, status_code=500)
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get("https://openrouter.ai/api/v1/key", headers=headers) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return JSONResponse(
+                        {"success": False, "error": f"OpenRouter HTTP {resp.status}"},
+                        status_code=502,
+                    )
+                d = data.get("data", {})
+                return JSONResponse({
+                    "success": True,
+                    "limit": d.get("limit"),
+                    "limit_remaining": d.get("limit_remaining"),
+                    "usage_daily": d.get("usage_daily"),
+                    "limit_reset": d.get("limit_reset"),
+                })
+    except Exception as e:
+        return JSONResponse({"success": False, "error": f"Request failed: {e}"}, status_code=502)
 
 
 @app.post("/api/deck/parse")
@@ -392,9 +683,9 @@ async def api_parse_deck(request: Request):
 # ------------------------------------------------------------------
 
 @app.get("/api/decks/list")
-async def api_list_decks():
-    """Return list of saved decks."""
-    return JSONResponse({"decks": list_decks()})
+async def api_list_decks(game_format: str = "Commander"):
+    """Return list of saved decks filtered by format."""
+    return JSONResponse({"decks": list_decks(game_format)})
 
 
 @app.post("/api/decks/save")
@@ -412,29 +703,30 @@ async def api_save_deck(request: Request):
     if not commander_names and body.get("commander_name"):
         commander_names = [body["commander_name"]]
     card_count = body.get("card_count", 0)
+    game_format = body.get("format", "Commander")
 
     if not name or not decklist_text:
         return JSONResponse({"success": False, "error": "Name and decklist required"}, status_code=400)
 
-    result = save_deck(name, decklist_text, commander_names, card_count)
+    result = save_deck(name, decklist_text, commander_names, card_count, game_format=game_format)
     return JSONResponse({"success": True, "filename": result["filename"]})
 
 
 @app.get("/api/decks/load")
-async def api_load_deck(filename: str = ""):
+async def api_load_deck(filename: str = "", game_format: str = "Commander"):
     """Load a saved deck by filename."""
     if not filename:
         return JSONResponse({"success": False, "error": "No filename"}, status_code=400)
-    data = load_deck(filename)
+    data = load_deck(filename, game_format=game_format)
     if not data:
         return JSONResponse({"success": False, "error": "Deck not found"}, status_code=404)
     return JSONResponse({"success": True, "deck": data})
 
 
 @app.delete("/api/decks/{filename}")
-async def api_delete_deck(filename: str):
+async def api_delete_deck(filename: str, game_format: str = "Commander"):
     """Delete a saved deck."""
-    if delete_deck(filename):
+    if delete_deck(filename, game_format=game_format):
         return JSONResponse({"success": True})
     return JSONResponse({"success": False, "error": "Deck not found"}, status_code=404)
 
@@ -588,13 +880,15 @@ async def websocket_endpoint(websocket: WebSocket):
             if action_type == "get_bot_hand":
                 oracle_mode = action.get("oracle_mode", "off")
                 number_hand = action.get("number_hand", False)
-                hand_text = generate_bot_hand(engine.state, oracle_mode=oracle_mode, number_hand=number_hand)
+                player_index = action.get("player_index")
+                hand_text = generate_bot_hand(engine.state, oracle_mode=oracle_mode, number_hand=number_hand, player_index=player_index)
                 await websocket.send_json({"type": "bot_hand", "text": hand_text})
                 continue
 
             if action_type == "get_mulligan_prompt":
                 oracle_mode = action.get("oracle_mode", "off")
-                text = generate_mulligan_prompt(engine.state, oracle_mode=oracle_mode)
+                player_index = action.get("player_index")
+                text = generate_mulligan_prompt(engine.state, oracle_mode=oracle_mode, player_index=player_index)
                 await websocket.send_json({"type": "mulligan_prompt", "text": text})
                 continue
 

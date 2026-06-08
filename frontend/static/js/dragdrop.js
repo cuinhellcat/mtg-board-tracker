@@ -88,10 +88,16 @@
 
         // Visual feedback on the source card
         cardEl.classList.add('dragging');
+
+        // Freeze zone scrolling for the duration of the drag so the browser
+        // doesn't auto-scroll a scrollable zone when the card is dragged
+        // toward its edge (see body.dragging-active rule in board.css).
+        document.body.classList.add('dragging-active');
     }
 
     function onDragEnd(e) {
         e.currentTarget.classList.remove('dragging');
+        document.body.classList.remove('dragging-active');
         removeGhost();
         // Remove all drop-hover highlights (safety cleanup)
         var highlighted = document.querySelectorAll('.drop-hover');
@@ -174,6 +180,10 @@
 
     function onDrop(e) {
         e.preventDefault();
+        // Belt-and-suspenders: also unfreeze scrolling here in case dragend
+        // doesn't fire (e.g. source element removed by a re-render).
+        document.body.classList.remove('dragging-active');
+
         var zone = findZoneFromTarget(e.target);
         if (!zone) return;
 
