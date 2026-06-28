@@ -470,7 +470,9 @@ async def _openrouter_chat(model: str, messages: list, reasoning_effort: str = "
 
     start = time.monotonic()
     try:
-        timeout = aiohttp.ClientTimeout(total=180)
+        # No total timeout — slow reasoning models (e.g. GPT-5.5) may think for
+        # minutes. The user cancels manually via the frontend if it takes too long.
+        timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 status = resp.status
@@ -545,8 +547,17 @@ async def api_llm_conversation(request: Request):
         if len(state.conversations) > 50:  # keep the save file sane
             state.conversations = state.conversations[-50:]
 
-    # Build the user message: first turn carries the board (partner's POV).
-    if not conv.messages:
+    # Build the user message.
+    kind = body.get("kind", "board")
+    if kind == "mulligan":
+        # Mulligan question (commander + current hand + London rule) — no board.
+        # Sent on every press, so re-pressing after a redraw lets the bot count
+        # its own mulligans from the conversation history.
+        content = generate_mulligan_prompt(
+            state, oracle_mode=body.get("oracle_mode", "off"), player_index=conv.partner_index,
+        )
+    elif not conv.messages:
+        # First turn carries the board (partner's POV).
         action_log = [e.model_dump() for e in state.action_log]
         board = build_board_prompt(
             state, action_log, conv.partner_index,
@@ -567,12 +578,34 @@ async def api_llm_conversation(request: Request):
     conv.model = model
     or_messages = [{"role": m.role, "content": m.content} for m in conv.messages]
 
-    ok, result = await _openrouter_chat(model, or_messages, reasoning_effort=body.get("reasoning", ""))
-    if not ok:
-        # Roll back the user turn; drop the conversation if it was just created.
-        conv.messages.pop()
+    def _rollback():
+        """Undo the dangling user turn (and drop a just-created empty conversation)."""
+        if conv.messages and conv.messages[-1].role == "user":
+            conv.messages.pop()
         if newly_created and not conv.messages and conv in state.conversations:
             state.conversations.remove(conv)
+
+    # Run the (no-timeout) model call as a task so we can cancel it if the client
+    # aborts the request (the frontend "Abbrechen" button disconnects).
+    or_task = asyncio.create_task(
+        _openrouter_chat(model, or_messages, reasoning_effort=body.get("reasoning", ""))
+    )
+    while not or_task.done():
+        if await request.is_disconnected():
+            or_task.cancel()
+            try:
+                await or_task
+            except BaseException:
+                pass
+            _rollback()
+            engine._auto_save()
+            _log_llm(f"CANCELLED model={model} (client disconnected)")
+            return JSONResponse({"success": False, "error": "cancelled"}, status_code=499)
+        await asyncio.sleep(0.2)
+
+    ok, result = or_task.result()
+    if not ok:
+        _rollback()
         return JSONResponse({"success": False, "error": f"[{model}] {result}"}, status_code=502)
 
     conv.messages.append(ConversationMessage(role="assistant", content=result, timestamp=_now_iso()))
@@ -609,6 +642,55 @@ async def api_llm_delete_message(request: Request):
     engine._auto_save()
     await broadcast_state()
     return JSONResponse({"success": True, "conversation_removed": conversation_removed})
+
+
+@app.post("/api/llm/conversation/set_grid")
+async def api_llm_set_grid(request: Request):
+    """Replace the progress-marker grid of one message. Persisted + broadcast.
+
+    Body: {conversation_id, message_index, grid: {"col,row": "y"|"g", ...}}.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+
+    conv_id = body.get("conversation_id")
+    idx = body.get("message_index")
+    grid = body.get("grid")
+    conv = next((c for c in engine.state.conversations if c.id == conv_id), None)
+    if conv is None:
+        return JSONResponse({"success": False, "error": "Conversation not found"}, status_code=404)
+    if not isinstance(idx, int) or not (0 <= idx < len(conv.messages)):
+        return JSONResponse({"success": False, "error": "Invalid message_index"}, status_code=400)
+    if not isinstance(grid, dict):
+        return JSONResponse({"success": False, "error": "Invalid grid"}, status_code=400)
+
+    # Sanitize: keep only "col,row" -> "y"/"g" entries.
+    clean = {k: v for k, v in grid.items() if isinstance(k, str) and v in ("y", "g")}
+    conv.messages[idx].grid = clean
+    engine._auto_save()
+    await broadcast_state()
+    return JSONResponse({"success": True})
+
+
+@app.post("/api/llm/conversation/clear_grid")
+async def api_llm_clear_grid(request: Request):
+    """Clear all progress-marker grids in a conversation. Persisted + broadcast."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+
+    conv_id = body.get("conversation_id")
+    conv = next((c for c in engine.state.conversations if c.id == conv_id), None)
+    if conv is None:
+        return JSONResponse({"success": False, "error": "Conversation not found"}, status_code=404)
+    for m in conv.messages:
+        m.grid = {}
+    engine._auto_save()
+    await broadcast_state()
+    return JSONResponse({"success": True})
 
 
 @app.get("/api/llm/limit")

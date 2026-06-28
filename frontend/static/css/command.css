@@ -237,7 +237,40 @@ body {
     line-height: 1.5;
     color: var(--text-primary);
     white-space: pre-wrap;
+    position: relative;  /* anchor the progress-marker grid overlay */
 }
+
+/* ---- Progress-marker grid (paint over bot answers to track done steps) ---- */
+.chat-tools {
+    display: flex;
+    gap: 6px;
+    padding: 2px 12px 0;
+    align-items: center;
+}
+.chat-tools #grid-toggle.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow);
+}
+.chat-grid {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;  /* view-only: marks visible, text still selectable */
+}
+.chat-grid.on {
+    pointer-events: auto;
+    cursor: crosshair;
+    background-image:
+        repeating-linear-gradient(to right, rgba(255,255,255,0.13) 0 1px, transparent 1px var(--grid-cell)),
+        repeating-linear-gradient(to bottom, rgba(255,255,255,0.13) 0 1px, transparent 1px var(--grid-cell));
+}
+.grid-cell {
+    position: absolute;
+    pointer-events: none;
+}
+.grid-cell.y { background: rgba(255, 210, 0, 0.32); }
+.grid-cell.g { background: rgba(60, 215, 90, 0.34); }
 
 .chat-time {
     font-size: 10px;

@@ -103,6 +103,9 @@ class ConversationMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
     timestamp: str  # ISO datetime
+    # Persistent progress-marker grid the user paints over an assistant answer to
+    # track which steps they've done. Maps "col,row" -> "y" (yellow) | "g" (green).
+    grid: Dict[str, str] = Field(default_factory=dict)
 
 
 class Conversation(BaseModel):

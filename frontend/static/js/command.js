@@ -19,6 +19,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let draftPartnerIndex = null;       // partner for a new/empty (unsaved) conversation
     let lastActivePlayerIndex = null;   // to detect turn changes
     let llmBusy = false;
+    let llmAbortController = null;       // to cancel an in-flight LLM request
+    // Progress-marker grid over bot answers (left=yellow, right=green, drag=multi)
+    // Cell size = the text's line-height, so one text line == one row of cells.
+    const GRID_CELL_FALLBACK = 21;      // px, used if line-height can't be read
+    let gridOn = localStorage.getItem('mtg-grid-on') === '1';
+    let gridDrag = null;                // active paint drag: {convId,msgIndex,overlay,cells,color,erase,dirty}
 
     // ---- DOM references ----
     const chatMessagesEl = document.getElementById('chat-messages');
@@ -201,6 +207,76 @@ document.addEventListener('DOMContentLoaded', () => {
         return msgEl;
     }
 
+    // Cell size for a text box = its line-height, so a row of cells == a text line.
+    function gridCellSize(textEl) {
+        const lh = parseFloat(getComputedStyle(textEl).lineHeight);
+        return (isFinite(lh) && lh > 0) ? lh : GRID_CELL_FALLBACK;
+    }
+
+    // Draw the colored cells of a grid map ("col,row" -> "y"|"g") into an overlay.
+    function renderGridCells(overlay, cells, cell) {
+        overlay.querySelectorAll('.grid-cell').forEach((c) => c.remove());
+        Object.keys(cells).forEach((key) => {
+            const parts = key.split(',');
+            const col = parseInt(parts[0], 10), row = parseInt(parts[1], 10);
+            if (isNaN(col) || isNaN(row)) return;
+            const el = document.createElement('div');
+            el.className = 'grid-cell ' + (cells[key] === 'g' ? 'g' : 'y');
+            el.style.left = (col * cell) + 'px';
+            el.style.top = (row * cell) + 'px';
+            el.style.width = cell + 'px';
+            el.style.height = cell + 'px';
+            overlay.appendChild(el);
+        });
+    }
+
+    // Attach a progress-marker grid overlay to an assistant bubble's text box.
+    // Marks are always shown; painting (lines + mouse) is enabled only when gridOn.
+    function attachGrid(bubbleEl, convId, msgIndex, gridMap) {
+        const textEl = bubbleEl.querySelector('.chat-text');
+        if (!textEl) return;
+        const cell = gridCellSize(textEl);
+        const overlay = document.createElement('div');
+        overlay.className = 'chat-grid' + (gridOn ? ' on' : '');
+        overlay.style.setProperty('--grid-cell', cell + 'px');
+        const cells = Object.assign({}, gridMap);
+        renderGridCells(overlay, cells, cell);
+        textEl.appendChild(overlay);
+        if (!gridOn) return;  // view-only: marks visible, no grid lines / painting
+
+        const cellAt = (e) => {
+            const r = overlay.getBoundingClientRect();
+            const col = Math.floor((e.clientX - r.left) / cell);
+            const row = Math.floor((e.clientY - r.top) / cell);
+            if (col < 0 || row < 0) return null;
+            return col + ',' + row;
+        };
+        const applyCell = (key) => {
+            if (!key || !gridDrag) return;
+            if (gridDrag.erase) {
+                if (gridDrag.cells[key]) { delete gridDrag.cells[key]; gridDrag.dirty = true; }
+            } else if (gridDrag.cells[key] !== gridDrag.color) {
+                gridDrag.cells[key] = gridDrag.color; gridDrag.dirty = true;
+            }
+            renderGridCells(overlay, gridDrag.cells, cell);
+        };
+
+        overlay.addEventListener('contextmenu', (e) => e.preventDefault());
+        overlay.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 && e.button !== 2) return;
+            e.preventDefault();
+            const key = cellAt(e);
+            if (key === null) return;
+            const color = (e.button === 2) ? 'g' : 'y';
+            gridDrag = { convId, msgIndex, overlay, cells, color, erase: (cells[key] === color), dirty: false };
+            applyCell(key);
+        });
+        overlay.addEventListener('mousemove', (e) => {
+            if (!gridDrag || gridDrag.overlay !== overlay) return;
+            applyCell(cellAt(e));
+        });
+    }
+
     function renderConversationTabs() {
         const el = document.getElementById('conversation-tabs');
         if (!el) return;
@@ -256,15 +332,22 @@ document.addEventListener('DOMContentLoaded', () => {
             // Detect the board-bearing message by content (robust to deletions),
             // not by position — the first message isn't necessarily the board.
             const isBoard = m.role === 'user' && m.content.indexOf('-- BOARD STATE ===') !== -1;
+            const isMull = m.role === 'user' && !isBoard && m.content.indexOf('Mulligan oder Behalten') !== -1;
             let bubble;
             if (isBoard) {
                 bubble = appendBubble('Du', '📋 [Boardstate gesendet]', 'user board-chip');
+            } else if (isMull) {
+                bubble = appendBubble('Du', '🎴 [Mulligan-Frage gesendet]', 'user board-chip');
             } else if (m.role === 'user') {
                 bubble = appendBubble('Du', m.content, 'user');
             } else {
                 bubble = appendBubble(partnerName, m.content, 'assistant');
             }
             addDeleteButton(bubble, convId, i);
+            if (m.role === 'assistant') {
+                const hasCells = m.grid && Object.keys(m.grid).length > 0;
+                if (gridOn || hasCells) attachGrid(bubble, convId, i, m.grid || {});
+            }
         });
     }
 
@@ -307,7 +390,14 @@ document.addEventListener('DOMContentLoaded', () => {
         chatSendBtn.disabled = busy;
         chatInputEl.disabled = busy;
         if (llmAskBtn) llmAskBtn.disabled = busy || activePlayerIndex() < 1;
+        const cancelBtn = document.getElementById('llm-cancel-btn');
+        if (cancelBtn) cancelBtn.style.display = busy ? '' : 'none';
     }
+
+    // Cancel an in-flight LLM request (aborts the fetch; backend rolls back).
+    document.getElementById('llm-cancel-btn').addEventListener('click', () => {
+        if (llmAbortController) llmAbortController.abort();
+    });
 
     // Core: send a message into the active/draft conversation (or a forced-new one)
     function sendToConversation(userText, forceNewPartner) {
@@ -336,8 +426,10 @@ document.addEventListener('DOMContentLoaded', () => {
         chatInputEl.value = '';
 
         const hideHand = localStorage.getItem('hideOpponentHand') !== 'false';
+        llmAbortController = new AbortController();
         fetch('/api/llm/conversation', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
+            signal: llmAbortController.signal,
             body: JSON.stringify({
                 conversation_id: convId,
                 partner_index: partnerIdx,
@@ -366,11 +458,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         })
         .catch((err) => {
-            if (userText) chatInputEl.value = userText;
+            if (userText) chatInputEl.value = userText;  // restore so you can resend
             renderChatUI();
-            appendBubble('System', 'LLM-Anfrage fehlgeschlagen: ' + err, 'system');
+            if (err && err.name === 'AbortError') {
+                appendBubble('System', 'Abgebrochen. Du kannst neu senden.', 'system');
+            } else {
+                appendBubble('System', 'LLM-Anfrage fehlgeschlagen: ' + err, 'system');
+            }
         })
-        .finally(() => { llmBusy = false; setInputsBusy(false); refreshLlmLimit(); });
+        .finally(() => { llmBusy = false; llmAbortController = null; setInputsBusy(false); refreshLlmLimit(); });
     }
 
     // Send box = follow-up / first message into the current conversation
@@ -383,6 +479,39 @@ document.addEventListener('DOMContentLoaded', () => {
     chatSendBtn.addEventListener('click', sendChatMessage);
     chatInputEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendChatMessage(); }
+    });
+
+    // ---- Progress-marker grid: toggle, clear-all, drag-commit ----
+    const gridToggleBtn = document.getElementById('grid-toggle');
+    if (gridToggleBtn) {
+        gridToggleBtn.classList.toggle('active', gridOn);
+        gridToggleBtn.addEventListener('click', () => {
+            gridOn = !gridOn;
+            localStorage.setItem('mtg-grid-on', gridOn ? '1' : '0');
+            gridToggleBtn.classList.toggle('active', gridOn);
+            renderChatUI();
+        });
+    }
+    const gridClearBtn = document.getElementById('grid-clear');
+    if (gridClearBtn) {
+        gridClearBtn.addEventListener('click', () => {
+            if (!activeConversationId) return;
+            if (!confirm('Alle Gitter-Markierungen in dieser Unterhaltung entfernen?')) return;
+            fetch('/api/llm/conversation/clear_grid', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conversation_id: activeConversationId })
+            }).then(() => renderChatUI()).catch(() => {});
+        });
+    }
+    // Commit a paint drag on mouse release (anywhere) — persist the message's grid.
+    document.addEventListener('mouseup', () => {
+        if (!gridDrag) return;
+        const d = gridDrag; gridDrag = null;
+        if (!d.dirty) return;
+        fetch('/api/llm/conversation/set_grid', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation_id: d.convId, message_index: d.msgIndex, grid: d.cells })
+        }).catch(() => {});
     });
 
     // ================================================================
@@ -626,36 +755,68 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ================================================================
-    // Mulligan Prompt
+    // Mulligan — ask the top-board bot in its own (per-bot) conversation
     // ================================================================
-
-    let pendingMulliganPrompt = false;
-
-    MTGSocket.on('mulligan_prompt', (data) => {
-        if (!pendingMulliganPrompt) return;
-        pendingMulliganPrompt = false;
-        const text = data.text || '';
-        navigator.clipboard.writeText(text).then(() => {
-            showCopyToast();
-        }).catch(() => {
-            snapshotTextEl.value = text;
-            snapshotTextEl.select();
-            document.execCommand('copy');
-            showCopyToast();
-        });
-    });
 
     const copyMulliganBtn = document.getElementById('copy-mulligan-prompt');
     let mulliganBtnClicked = false;
+    const mulliganConvByBot = {};  // botIndex -> conversation id (this session)
+
     copyMulliganBtn.addEventListener('click', () => {
-        pendingMulliganPrompt = true;
+        if (llmBusy) return;
+        const bot = viewedOpponentIndex();
+        if (bot == null || bot < 1) {
+            appendBubble('System', 'Kein Bot oben im Board State Tracker ausgewählt.', 'system');
+            return;
+        }
         mulliganBtnClicked = true;
         copyMulliganBtn.classList.remove('btn-blink');
-        MTGSocket.send({
-            action: 'get_mulligan_prompt',
-            oracle_mode: oracleModeEl.value,
-            player_index: viewedOpponentIndex()
-        });
+
+        // Continue this bot's mulligan thread if it still exists, else start one.
+        let convId = mulliganConvByBot[bot];
+        if (convId && !findConv(convId)) convId = null;
+
+        llmBusy = true; setInputsBusy(true);
+        const model = llmModelEl.value;
+        appendBubble('Du', '🎴 [Mulligan-Frage gesendet]', 'user board-chip');
+        appendBubble(playerName(bot), '… denkt nach (' + model + ')', 'system');
+
+        llmAbortController = new AbortController();
+        fetch('/api/llm/conversation', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            signal: llmAbortController.signal,
+            body: JSON.stringify({
+                conversation_id: convId,
+                partner_index: bot,
+                kind: 'mulligan',
+                user_text: '',
+                model: model,
+                reasoning: llmReasoningEl.value,
+                oracle_mode: oracleModeEl.value
+            })
+        })
+        .then((res) => res.json().catch(() => ({ success: false, error: 'Bad response' })))
+        .then((data) => {
+            if (data && data.success) {
+                mulliganConvByBot[bot] = data.conversation_id;
+                activeConversationId = data.conversation_id;
+                draftPartnerIndex = null;
+                localStorage.setItem('mtg-active-conv', data.conversation_id);
+            }
+            renderChatUI();
+            if (!data || !data.success) {
+                appendBubble('System', 'Mulligan-Fehler: ' + ((data && data.error) || 'Unbekannt'), 'system');
+            }
+        })
+        .catch((err) => {
+            renderChatUI();
+            if (err && err.name === 'AbortError') {
+                appendBubble('System', 'Abgebrochen. Du kannst neu senden.', 'system');
+            } else {
+                appendBubble('System', 'Mulligan-Anfrage fehlgeschlagen: ' + err, 'system');
+            }
+        })
+        .finally(() => { llmBusy = false; llmAbortController = null; setInputsBusy(false); refreshLlmLimit(); });
     });
 
     // ================================================================

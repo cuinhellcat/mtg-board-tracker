@@ -2357,7 +2357,14 @@
             var ul = document.createElement('ul');
             ul.style.cssText = 'margin:4px 0 0 4px; padding:0;';
             entries.forEach(function (e) {
-                var who = (e.controller_index === 0) ? 'du' : 'Gegner';
+                var who;
+                if (e.controller_index === 0) {
+                    who = 'du';
+                } else if (currentState && currentState.players && currentState.players[e.controller_index]) {
+                    who = currentState.players[e.controller_index].name;
+                } else {
+                    who = 'Gegner';
+                }
                 var li = document.createElement('li');
                 li.style.cssText = 'list-style:none; margin:2px 0;' + (e.ignored ? ' opacity:0.5;' : '');
                 li.innerHTML =
